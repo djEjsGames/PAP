@@ -1,0 +1,23 @@
+# Godot generated cache and imports
+.godot/
+*.translation
+
+# Exported builds and credentials
+/build/
+/builds/
+/exports/
+export_credentials.cfg
+
+# .NET build output (if C# is added)
+.mono/
+**/bin/
+**/obj/
+*.csproj.user
+*.sln.docstates
+
+# Local editor and operating system files
+.vs/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
