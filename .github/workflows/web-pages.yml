@@ -1,0 +1,85 @@
+name: Web test build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: 4.7.1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache Godot and web templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/bin/godot
+            ~/.local/share/godot/export_templates/4.7.1.stable
+          key: godot-web-linux-4.7.1
+      - name: Install standard Godot and web templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+          curl --fail --location --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -o "$RUNNER_TEMP/godot.zip"
+          curl --fail --location --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -o "$RUNNER_TEMP/templates.tpz"
+          mkdir -p "$HOME/.local/bin" "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          unzip -j "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot"
+          mv "$RUNNER_TEMP/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64" "$HOME/.local/bin/godot"
+          chmod +x "$HOME/.local/bin/godot"
+          unzip -j "$RUNNER_TEMP/templates.tpz" 'templates/web_nothreads_*.zip' -d "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+      - name: Import project
+        run: ~/.local/bin/godot --headless --path . --editor --import
+      - name: Run regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          ~/.local/bin/godot --headless --path . --script res://tests/test_paper.gd --log-file "$PWD/build/tests.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/tests.log; then exit 1; fi
+          grep -E 'PAP: [0-9]+ checks, 0 failures' build/tests.log
+      - name: Export Web
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/web
+          ~/.local/bin/godot --headless --path . --export-release Web build/web/index.html --log-file "$PWD/build/export.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/export.log; then exit 1; fi
+          test -s build/web/index.html
+          test -s build/web/index.wasm
+          test -s build/web/index.pck
+          cp assets/fonts/OFL.txt build/web/OFL.txt
+          touch build/web/.nojekyll
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: build/web
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

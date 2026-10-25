@@ -208,7 +208,7 @@ func _build_ui() -> void:
 	confirm_toggle.toggled.connect(_set_confirmation)
 	dump_button.text = "상태 덤프 [Ctrl+Shift+D]"
 	dump_button.pressed.connect(_dump_state)
-	dump_folder_button.text = "덤프 폴더"
+	dump_folder_button.text = "덤프 다운로드" if OS.has_feature("web") else "덤프 폴더"
 	dump_folder_button.pressed.connect(_open_dump_folder)
 	for button in [reset_button, reference_button, reference_tool, reference_reset, view_button, pause_button, slow_toggle, confirm_toggle, dump_button, dump_folder_button]:
 		button.focus_mode = Control.FOCUS_NONE
@@ -870,6 +870,11 @@ func _append_posed_faces(output: Array[Dictionary], source: Array[Dictionary], m
 		output.append({"world_vertices": vertices, "paper": source[layer].paper, "seams": source[layer].seams, "front": source[layer].front, "moving": moving, "layer": layer})
 
 func _dump_state(path_override: String = "") -> String:
+	if OS.has_feature("web") and path_override.is_empty():
+		var filename := "pap_%s.json" % Time.get_datetime_string_from_system().replace(":", "-")
+		JavaScriptBridge.download_buffer(JSON.stringify(Dump.encode(_snapshot()), "  ", true, true).to_utf8_buffer(), filename, "application/json")
+		dump_notice.text = "덤프 다운로드를 요청했습니다: " + filename
+		return filename
 	var folder := "user://dumps"
 	var path := path_override
 	if path.is_empty():
@@ -896,6 +901,9 @@ func _dump_state(path_override: String = "") -> String:
 	return absolute
 
 func _open_dump_folder() -> void:
+	if OS.has_feature("web"):
+		_dump_state()
+		return
 	DirAccess.make_dir_recursive_absolute("user://dumps")
 	var error := OS.shell_open(ProjectSettings.globalize_path("user://dumps"))
 	if error != OK:

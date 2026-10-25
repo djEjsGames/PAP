@@ -30,6 +30,10 @@ window/size/min_height=360
 
 project/assembly_name="Paper AirPlane"
 
+[gui]
+
+theme/custom_font.web="res://assets/fonts/NanumGothic-Regular.ttf"
+
 [layer_names]
 
 3d_physics/layer_1="World"

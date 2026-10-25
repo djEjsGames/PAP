@@ -288,3 +288,22 @@ Godot이 생성하는 `.uid` 및 `.import` 파일은 커밋합니다.
 좌표 정밀도를 보존하는 JSON 형식이며 임시 파일을 쓴 뒤 교체합니다.
 손상되거나 지원하지 않는 형식은 오류를 표시하고 현재 작업을 유지합니다.
 현재는 로컬 저장만 지원하며 삭제·이름 변경·미리보기·클라우드 동기화는 제공하지 않습니다.
+### 브라우저 테스트 빌드 / GitHub Pages
+
+테스트 주소: https://djejsGames.github.io/PAP/ (첫 배포 성공 후 활성화)
+
+`main` 푸시 또는 Actions의 **Web test build → Run workflow**로 빌드합니다.
+일반 Godot 4.7.1과 같은 버전의 공식 웹 템플릿을 사용하며, 헤드리스 회귀 검사와
+웹 내보내기가 성공한 결과만 GitHub Pages에 배포합니다. 저장소의 Pages 소스는 **GitHub Actions**입니다.
+빌드 결과는 Actions의 Pages 아티팩트로 올리며 소스 브랜치에 커밋하지 않습니다.
+
+로컬에서는 일반 Godot 4.7.1에서 `Web` 내보내기를 실행합니다.
+`build/web/index.html`을 생성한 뒤 HTTP 서버로 제공해야 합니다. 파일을 직접 더블클릭하지 않습니다.
+예: 프로젝트 루트에서 `python -m http.server 8000 --directory build/web` 실행 후 `http://localhost:8000` 접속.
+Mono 에디터는 웹 내보내기를 지원하지 않습니다. 기존 데스크톱 개발에는 계속 사용할 수 있습니다.
+
+웹은 Compatibility / WebGL 2 / 싱글 스레드 빌드입니다. PWA 캐시는 사용하지 않습니다.
+한글 표시를 위해 웹에서만 Nanum Gothic을 사용하며 OFL 라이선스는 `assets/fonts/OFL.txt`에 있습니다.
+덤프 버튼은 JSON 다운로드를 요청합니다. 프리셋은 브라우저의 IndexedDB에 저장되므로
+데스크톱 저장본과 별개이며, 사이트 데이터 삭제·시크릿 모드·저장소 차단 시 유지되지 않을 수 있습니다.
+현재 조작은 마우스와 키보드를 기준으로 하며 태블릿 터치 전용 조작은 별도 구현하지 않았습니다.
