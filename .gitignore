@@ -1,6 +1,11 @@
-# Godot generated cache and imports
+# Godot 4 generated cache and translation output
 .godot/
 *.translation
+
+# Generated Android build template
+/android/
+
+# Keep source .uid/.import files and export_presets.cfg tracked.
 
 # Exported builds and credentials
 /build/
