@@ -1110,7 +1110,7 @@ func _fold_ux_checks() -> void:
 		dump_key.ctrl_pressed = true
 		dump_key.shift_pressed = true
 		dump_key.pressed = true
-		var prior_files := DirAccess.get_files_at("user://dumps")
+		var prior_files := DirAccess.get_files_at("user://dumps") if DirAccess.dir_exists_absolute("user://dumps") else PackedStringArray()
 		Input.parse_input_event(dump_key)
 		await _wait_layout()
 		check(not app.tools.visible and app.dump_notice.is_visible_in_tree() and app.dump_notice.text.begins_with("저장됨"), "Shortcut save feedback must remain visible with diagnostics closed")
