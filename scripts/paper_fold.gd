@@ -1,7 +1,16 @@
 extends Node3D
 
+signal park_stored
+signal park_cancelled
+var park_mode := false
+
+const PlayUI := preload("res://scripts/play_ui.gd")
+const Stock := preload("res://scripts/paper_stock.gd")
+const Picker := preload("res://scripts/paper_picker.gd")
 const Paper := preload("res://scripts/paper_geometry.gd")
 const Dump := preload("res://scripts/paper_dump.gd")
+const Parts := preload("res://scripts/flight_parts.gd")
+const PartsEditor := preload("res://scripts/flight_parts_editor.gd")
 const Presets := preload("res://scripts/paper_presets.gd")
 const FoldReference := preload("res://scripts/fold_reference.gd")
 const AirplaneGuide := preload("res://scripts/airplane_guide.gd")
@@ -18,8 +27,14 @@ const READY_COLOR := Color("a6edac")
 const WAIT_COLOR := Color("f0c47c")
 enum State { IDLE, DRAWING, DRAGGING, PENDING, SETTLING, FLIPPING, UNFOLDING }
 
+var paper_stock := Stock.option(0)
+var picker := Picker.new()
+var pending_stock: Dictionary = {}
 var faces: Array[Dictionary] = Paper.square()
 var history: Array[Dictionary] = []
+var flight_parts: Dictionary = {}
+var parts_button := Button.new()
+var parts_editor := PartsEditor.new()
 var state := State.IDLE
 var mode := 1
 var click_to_confirm := false
@@ -62,6 +77,9 @@ var dump_folder_button := Button.new()
 var dump_notice := Label.new()
 var toolbar := PanelContainer.new()
 var footer := VBoxContainer.new()
+var action_bar := PanelContainer.new()
+var flight_session: Dictionary = {}
+var preset_fly := Button.new()
 var preset_store := Presets.new()
 var preset_button := Button.new()
 var preset_shade := ColorRect.new()
@@ -77,7 +95,7 @@ var preset_entries: Array[Dictionary] = []
 var preset_pending: Dictionary = {}
 var tools := PopupPanel.new()
 var tools_button := Button.new()
-var guide_flight := Button.new()
+var guide_flight := Label.new()
 var guide_mode_hint := Label.new()
 var work_area := Rect2()
 var layout_size := Vector2.ZERO
@@ -149,6 +167,14 @@ func _build_ui() -> void:
 	row.add_theme_constant_override("h_separation", 5)
 	row.add_theme_constant_override("v_separation", 4)
 	toolbar.add_child(row)
+	if park_mode:
+		var leave := Button.new()
+		leave.text = "수정 취소 · 공원으로"
+		leave.focus_mode = Control.FOCUS_NONE
+		leave.pressed.connect(func() -> void:
+			if state == State.IDLE: park_cancelled.emit()
+		)
+		row.add_child(leave)
 	mode_one.text = "1 잡아끌기"
 	mode_two.text = "2 선 긋기"
 	for button in [mode_one, mode_two]:
@@ -166,25 +192,30 @@ func _build_ui() -> void:
 	unfold_button.pressed.connect(_unfold)
 	guide_button.text = "가이드 [G]"
 	guide_button.pressed.connect(_toggle_guide)
-	flight_button.text = "날려보기 [B]"
+	flight_button.text = "접기 마치고 보관 [B]" if park_mode else "날려보기 [B]"
 	flight_button.pressed.connect(_open_flight)
-	preset_button.text = "프리셋 [P]"
+	parts_button.text = "비행 부위 지정"
+	parts_button.pressed.connect(_open_parts)
+	preset_button.text = "내 도면 [P]"
 	preset_button.pressed.connect(_show_presets)
 	tools_button.text = "도구…"
 	tools_button.pressed.connect(func() -> void: tools.popup_centered(Vector2i(mini(600, int(get_viewport().get_visible_rect().size.x) - 32), 0)))
-	for button in [mode_one, mode_two, layer_toggle, flip_button, undo_button, unfold_button, guide_button, flight_button, preset_button, tools_button]:
+	for button in [mode_one, mode_two, layer_toggle, flip_button, undo_button, unfold_button, guide_button, parts_button, reset_button, preset_button, tools_button]:
 		button.focus_mode = Control.FOCUS_NONE
 		row.add_child(button)
 	overlay.add_child(tools)
 	tools.theme = theme
+	tools.about_to_popup.connect(func() -> void: Audio.play_sfx("open"))
+	tools.popup_hide.connect(func() -> void: Audio.play_sfx("close"))
 	tools.add_theme_stylebox_override("panel", style)
 	var extra := VBoxContainer.new()
 	extra.add_theme_constant_override("separation", 8)
 	tools.add_child(extra)
 	var extra_row := HFlowContainer.new()
 	extra.add_child(extra_row)
+	Audio.add_button(extra_row)
 	reset_button.text = "새 종이 [R]"
-	reset_button.pressed.connect(_reset_paper)
+	reset_button.pressed.connect(_open_paper_picker)
 	reference_button.text = "기준 편집 [4]"
 	reference_button.toggle_mode = true
 	reference_button.pressed.connect(_toggle_reference_edit)
@@ -210,30 +241,47 @@ func _build_ui() -> void:
 	dump_button.pressed.connect(_dump_state)
 	dump_folder_button.text = "덤프 다운로드" if OS.has_feature("web") else "덤프 폴더"
 	dump_folder_button.pressed.connect(_open_dump_folder)
-	for button in [reset_button, reference_button, reference_tool, reference_reset, view_button, pause_button, slow_toggle, confirm_toggle, dump_button, dump_folder_button]:
+	for button in [reference_button, reference_tool, reference_reset, view_button, pause_button, slow_toggle, confirm_toggle, dump_button, dump_folder_button]:
 		button.focus_mode = Control.FOCUS_NONE
 		extra_row.add_child(button)
-	for button in [reset_button, reference_button, reference_reset, view_button]:
+	for button in [reference_button, reference_reset, view_button]:
 		button.pressed.connect(func() -> void: tools.hide())
 	var close_tools := Button.new()
 	close_tools.text = "닫기"
 	close_tools.focus_mode = Control.FOCUS_NONE
 	close_tools.pressed.connect(func() -> void: tools.hide())
 	extra.add_child(close_tools)
-	overlay.add_child(footer)
+	overlay.add_child(action_bar)
+	action_bar.add_theme_stylebox_override("panel", style)
+	action_bar.add_child(footer)
 	footer.add_theme_constant_override("separation", 4)
-	counter.add_theme_font_size_override("font_size", 15)
+	counter.add_theme_font_size_override("font_size", 13)
+	counter.max_lines_visible = 1
 	counter.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	footer.add_child(counter)
 	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	status.add_theme_font_size_override("font_size", 12)
 	status.max_lines_visible = 2
 	footer.add_child(status)
 	dump_notice.add_theme_font_size_override("font_size", 12)
 	dump_notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	dump_notice.max_lines_visible = 2
-	footer.add_child(dump_notice)
+	dump_notice.max_lines_visible = 3
+	dump_notice.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.add_child(dump_notice)
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	footer.add_child(spacer)
+	footer.add_child(flight_button)
+	flight_button.focus_mode = Control.FOCUS_NONE
+	PlayUI.primary(flight_button)
 	_build_airplane_guide()
+	parts_editor.source = self
+	parts_editor.add_theme_stylebox_override("panel", style)
+	overlay.add_child(parts_editor)
 	_build_presets_ui(style)
+	picker.source = self
+	overlay.add_child(picker)
 func _process(_delta: float) -> void:
 	if flight_view != null:
 		return
@@ -259,6 +307,10 @@ func _process(_delta: float) -> void:
 	overlay.queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if picker.visible: return
+	if parts_editor.visible:
+		if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE: parts_editor.hide()
+		return
 	if preset_shade.visible:
 		if event is InputEventKey and event.pressed and event.physical_keycode == KEY_ESCAPE:
 			_hide_presets()
@@ -283,9 +335,11 @@ func _unhandled_input(event: InputEvent) -> void:
 					_dump_state()
 			KEY_G: _toggle_guide()
 			KEY_P: _show_presets()
-			KEY_B: _open_flight()
+			KEY_B:
+				get_viewport().set_input_as_handled()
+				_open_flight()
 			KEY_Z: _undo()
-			KEY_R: _reset_paper()
+			KEY_R: _open_paper_picker()
 			KEY_ESCAPE: _cancel()
 		return
 	if event is InputEventMouseButton:
@@ -301,6 +355,14 @@ func _unhandled_input(event: InputEvent) -> void:
 
 # Release must still reach the drag when the mouse ends over a toolbar button.
 func _input(event: InputEvent) -> void:
+	if picker.visible and event is InputEventKey:
+		get_viewport().set_input_as_handled()
+		if event.pressed and event.physical_keycode == KEY_ESCAPE: picker.hide()
+		return
+	if preset_shade.visible and event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_ESCAPE:
+		get_viewport().set_input_as_handled()
+		_hide_presets()
+		return
 	if event is InputEventKey and event.physical_keycode == KEY_SHIFT and not event.echo:
 		if state == State.DRAGGING or state == State.DRAWING or reference_drawing:
 			_motion(last_drag_point, event.pressed)
@@ -326,6 +388,19 @@ func _snap_point(point: Vector2, freehand: bool) -> Vector2:
 	var snapped := _line_start_preview(point, freehand)
 	if point.distance_to(snapped) > Paper.EPS:
 		snap_marker = snapped
+	return snapped
+
+func _line_end_preview(point: Vector2, freehand: bool) -> Vector2:
+	snap_marker = Vector2.INF
+	if freehand: return point
+	var candidate := Paper.snap_candidate(faces, point, _pixel_radius(SNAP_RADIUS_PX), true, _snap_reference())
+	var snapped: Vector2 = candidate.point
+	# Exact guide anchors still win, even when they do not move the cursor.
+	if not candidate.snapped:
+		var offset := point - line_a
+		if offset.length_squared() > Paper.EPS * Paper.EPS:
+			snapped = line_a + Vector2.from_angle(snappedf(offset.angle(), PI / 12.0)) * offset.length()
+	if snapped.distance_to(point) > Paper.EPS: snap_marker = snapped
 	return snapped
 
 func _press(point: Vector2, freehand: bool = false) -> void:
@@ -377,7 +452,7 @@ func _motion(point: Vector2, freehand: bool = false) -> void:
 		reference_b = point if freehand else Paper.snap(faces, point, _pixel_radius(SNAP_RADIUS_PX))
 		return
 	if state == State.DRAWING:
-		line_b = _snap_point(point, freehand)
+		line_b = _line_end_preview(point, freehand)
 	elif state == State.DRAGGING:
 		var target := _snap_point(point, freehand)
 		if mode == 1:
@@ -455,6 +530,7 @@ func _finish_commit() -> void:
 	_remember("fold", fold_plan)
 	faces = Paper.folded(fold_plan)
 	fold_count += 1
+	Audio.play_sfx("fold")
 	fold_plan = {}
 	line_ready = false
 	state = State.IDLE
@@ -534,6 +610,7 @@ func _animate_flip(value: float) -> void:
 	_refresh_ui()
 
 func _finish_flip() -> void:
+	Audio.play_sfx("unfold")
 	if reverse_flip:
 		var previous: Dictionary = history.pop_back()
 		faces = previous.faces
@@ -578,6 +655,7 @@ func _unfold() -> void:
 	settle_tween.tween_callback(_finish_unfold)
 
 func _finish_unfold() -> void:
+	Audio.play_sfx("unfold")
 	var previous: Dictionary = history.pop_back()
 	faces = previous.faces
 	fold_count = previous.fold_count
@@ -629,11 +707,15 @@ func _undo() -> void:
 	fold_count = previous.fold_count
 	_refresh()
 
-func _reset_paper() -> void:
+func _reset_paper(stock: Dictionary = {}) -> void:
 	if _animating():
 		return
-	faces = Paper.square()
+	dump_notice.text = ""
+	paper_stock = Stock.option(0) if stock.is_empty() else stock.duplicate(true)
+	faces = Paper.rectangle(paper_stock.size)
 	custom_reference = {}
+	flight_parts = {}
+	parts_editor.hide()
 	reference_editing = false
 	reference_drawing = false
 	history.clear()
@@ -660,6 +742,10 @@ func _pixel_radius(pixels: float) -> float:
 	return _paper_position(Vector2.ZERO).distance_to(_paper_position(Vector2(pixels, 0)))
 
 func _refresh() -> void:
+	var size := Paper.square_size(faces)
+	guide_steps.assign(AirplaneGuide.steps(size) if size > 0 else [{"action": "notice", "title": "정사각형용 가이드", "text": "이 가이드는 정사각형용입니다. 직사각형 종이는 원래 비율로 자유롭게 접어 보세요."}])
+	_set_guide_step(guide_step)
+	if parts_editor.visible and parts_editor.candidate.get("signature", "") != Parts.signature(faces, history): parts_editor.hide()
 	reference = FoldReference.geometry(faces, custom_reference)
 	_refresh_mesh()
 	_refresh_ui()
@@ -680,17 +766,20 @@ func _refresh_ui() -> void:
 	confirm_toggle.disabled = state != State.IDLE
 	undo_button.disabled = _animating() or (history.is_empty() and state == State.IDLE and not line_ready)
 	reset_button.disabled = _animating()
+	reset_button.text = "새 종이 [R] · " + Stock.summary(paper_stock)
 	layer_toggle.set_pressed_no_signal(single_layer)
 	layer_toggle.disabled = state != State.IDLE
 	flip_button.disabled = state != State.IDLE
 	flight_button.disabled = state != State.IDLE
+	parts_button.disabled = state != State.IDLE or reference_drawing
+	parts_button.text = "비행 부위 · 확정" if Parts.valid(flight_parts, faces, history) else ("비행 부위 · 재확인" if not flight_parts.is_empty() else "비행 부위 · 추천")
 	preset_button.disabled = state != State.IDLE or reference_drawing
 	unfold_button.disabled = state != State.IDLE or fold_count == 0
 	view_button.text = "탑뷰로 돌아가기 [V]" if inspect_view else "옆에서 보기 [V]"
 	view_button.disabled = state in [State.DRAWING, State.DRAGGING, State.PENDING]
 	pause_button.disabled = not _animating()
 	pause_button.text = "계속 재생 [Space]" if animation_paused else "일시 정지 [Space]"
-	counter.text = "%d번 접음  ·  %s  ·  %s  ·  %s" % [fold_count, "잡아끌기" if mode == 1 else "선 긋기", "위쪽 연결부" if single_layer else "겹친 층 전체", "클릭 확정" if click_to_confirm else "놓으면 확정"]
+	counter.text = "%s · %d번 접음  ·  %s  ·  %s  ·  %s" % [Stock.summary(paper_stock), fold_count, "잡아끌기" if mode == 1 else "선 긋기", "위쪽 연결부" if single_layer else "겹친 층 전체", "클릭 확정" if click_to_confirm else "놓으면 확정"]
 	if _animating():
 		counter.text += "  ·  %.0f°" % rad_to_deg(flip_angle if state == State.FLIPPING else fold_angle)
 	match state:
@@ -702,7 +791,7 @@ func _refresh_ui() -> void:
 			else:
 				status.text = "종이를 가로질러 접기선을 그으세요. 선이 생기면 접을 쪽 가장자리를 잡습니다."
 		State.DRAWING:
-			status.text = "원하는 방향으로 선을 긋고 놓으세요. 종이 양 끝까지 접기선이 이어집니다."
+			status.text = "기준점·기준선 우선, 그 외에는 15° 단위로 선을 맞춥니다. Shift: 자유 각도 · 놓으면 접기선을 만듭니다."
 		State.DRAGGING:
 			status.text = "놓으면 접기가 확정됩니다. 우클릭 / Esc: 취소" if _can_commit() else "조금 더 반대쪽으로 넘기세요. 아직 놓으면 취소됩니다."
 		State.PENDING:
@@ -713,8 +802,7 @@ func _refresh_ui() -> void:
 			status.text = "접는 중…"
 		State.UNFOLDING:
 			status.text = "마지막 접기를 펼치는 중…"
-	guide_flight.disabled = state != State.IDLE
-	guide_mode_hint.text = "1 잡아끌기: 원 → 화살표 끝" if mode == 1 else "2 선 긋기: 점선을 먼저 그리고 원 → 화살표 끝"
+	guide_mode_hint.text = "직사각형 · 자유 접기" if guide_steps[guide_step].action == "notice" else ("1 잡아끌기: 원 → 화살표 끝" if mode == 1 else "2 선 긋기: 점선을 먼저 그리고 원 → 화살표 끝")
 	if animation_paused:
 		status.text = "일시 정지 · V로 옆에서 보기 · Space로 계속 재생 · Esc로 취소"
 	elif inspect_view and state == State.IDLE:
@@ -733,6 +821,7 @@ func _vertex(point: Vector2, layer: int, moving: bool) -> Vector3:
 	return Vector3(rotated.x, height, rotated.y)
 
 func _refresh_mesh() -> void:
+	paper_material.albedo_texture = Stock.texture(paper_stock)
 	var surface := SurfaceTool.new()
 	surface.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var edges := ImmediateMesh.new()
@@ -758,17 +847,19 @@ func _add_faces(surface: SurfaceTool, edges: ImmediateMesh, source: Array[Dictio
 		var visible_normal := paper_mesh.basis * normal
 		if visible_normal.dot(camera.global_basis.z) < 0.0:
 			front = not front
-		var color := FRONT if front else BACK
+		var color := Stock.front(paper_stock) if front else Stock.back(paper_stock)
 		if moving and state == State.DRAGGING:
 			color = color.lerp(GUIDE, 0.3)
 		for i in range(1, points.size() - 1):
-			var triangle := [points[0], points[i], points[i + 1]]
+			var triangle := [0, i, i + 1]
 			var reverse := (points[i] - points[0]).cross(points[i + 1] - points[0]) < 0.0
 			if moving and fold_angle > PI * 0.5:
 				reverse = not reverse
 			if reverse:
 				triangle.reverse()
-			for point in triangle:
+			for vertex in triangle:
+				var point: Vector2 = points[vertex]
+				surface.set_uv(face.paper[vertex] / paper_stock.size + Vector2(0.5, 0.5))
 				surface.set_color(color)
 				surface.set_normal(normal)
 				surface.add_vertex(_vertex(point, layer, moving))
@@ -778,6 +869,27 @@ func _add_faces(surface: SurfaceTool, edges: ImmediateMesh, source: Array[Dictio
 			edges.surface_add_vertex(_vertex(points[(i + 1) % points.size()], layer, moving) + Vector3.UP * 0.00001)
 
 func _draw_guides() -> void:
+	if parts_editor.visible and state == State.IDLE:
+		var region_center := Vector2.ZERO
+		var region_count := 0
+		for i in faces.size():
+			var role := Parts.role(i, faces, history, parts_editor.wings, parts_editor.grip)
+			if role != parts_editor.highlight: continue
+			var polygon := PackedVector2Array()
+			var center := Vector2.ZERO
+			for p in faces[i].points:
+				var q := _screen(p)
+				polygon.append(q)
+				center += q
+			center /= polygon.size()
+			overlay.draw_colored_polygon(polygon, Color(Parts.COLORS[role], 0.3))
+			polygon.append(polygon[0])
+			overlay.draw_polyline(polygon, Parts.COLORS[role], 3, true)
+			region_center += center
+			region_count += 1
+		if region_count > 0:
+			var role: int = parts_editor.highlight
+			overlay.draw_string(overlay.get_theme_default_font(), region_center / region_count + Vector2(8, -8), Parts.NAMES[role] + " · %d개 면" % region_count, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Parts.COLORS[role])
 	if not inspect_view and state in [State.IDLE, State.DRAWING, State.DRAGGING, State.PENDING] and not reference.is_empty():
 		for segment in reference.segments:
 			overlay.draw_dashed_line(_screen(segment[0]), _screen(segment[1]), Color(0.49, 0.88, 0.82, 0.4), 1.0, 6.0)
@@ -851,7 +963,7 @@ func _snapshot() -> Dictionary:
 		_append_posed_faces(posed_faces, fold_plan.stay, false)
 		_append_posed_faces(posed_faces, fold_plan.move, true)
 	return {
-		"format": "pap-fold-dump", "version": 1, "reference": {"definition": custom_reference.duplicate(true), "geometry": reference.duplicate(true), "editing": reference_editing, "drawing": reference_drawing, "tool": reference_tool.selected, "a": reference_a, "b": reference_b}, "flight": null if flight_view == null else flight_view.snapshot(), "guide": {"visible": guide_panel.visible, "step": guide_step},
+		"format": "pap-fold-dump", "version": 1, "paper_stock": paper_stock.duplicate(true), "flight_parts": flight_parts.duplicate(true), "reference": {"definition": custom_reference.duplicate(true), "geometry": reference.duplicate(true), "editing": reference_editing, "drawing": reference_drawing, "tool": reference_tool.selected, "a": reference_a, "b": reference_b}, "flight": null if flight_view == null else flight_view.snapshot(), "guide": {"visible": guide_panel.visible, "step": guide_step},
 		"captured_at": Time.get_datetime_string_from_system(),
 		"engine": Engine.get_version_info(),
 		"controls": {"mode": mode, "single_layer": single_layer, "click_to_confirm": click_to_confirm, "inspect_view": inspect_view, "slow_motion": slow_motion},
@@ -940,9 +1052,9 @@ func _build_airplane_guide() -> void:
 		row.add_child(button)
 	guide_previous.pressed.connect(func() -> void: _set_guide_step(guide_step - 1))
 	guide_next.pressed.connect(func() -> void: _set_guide_step(guide_step + 1))
-	guide_flight.text = "날려보기 [B]"
+	guide_flight.text = "준비되면 하단의 날려보기를 누르세요."
+	guide_flight.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	guide_flight.focus_mode = Control.FOCUS_NONE
-	guide_flight.pressed.connect(_open_flight)
 	column.add_child(guide_flight)
 	guide_panel.visible = false
 	_set_guide_step(0)
@@ -958,11 +1070,15 @@ func _set_guide_step(index: int) -> void:
 	guide_next.disabled = guide_step == guide_steps.size() - 1
 	guide_flight.visible = guide_step == guide_steps.size() - 1
 func _open_flight() -> void:
+	if park_mode:
+		if state == State.IDLE and not reference_drawing and not picker.visible and preset_pending.is_empty(): park_stored.emit()
+		return
 	if state != State.IDLE or flight_view != null:
 		return
 	line_ready = false
 	tools.hide()
-	get_window().content_scale_size = Vector2i(1280, 720)
+	parts_editor.hide()
+	get_window().content_scale_size = Vector2i.ZERO
 	flight_view = FlightTest.new()
 	flight_view.configure(faces, history, self)
 	flight_view.closed.connect(_close_flight)
@@ -976,6 +1092,7 @@ func _open_flight() -> void:
 func _close_flight() -> void:
 	if flight_view == null:
 		return
+	flight_session = flight_view.session_state()
 	flight_view.queue_free()
 	flight_view = null
 	get_window().content_scale_size = Vector2i.ZERO
@@ -1044,17 +1161,24 @@ func _layout_workspace() -> void:
 	preset_panel.position = (viewport - preset_panel.size) * 0.5
 	toolbar.position = Vector2(10, 8)
 	toolbar.size = Vector2(viewport.x - 20, 0)
-	footer.position = Vector2(14, 0)
-	footer.size = Vector2(viewport.x - 28, 0)
-	footer.position.y = viewport.y - footer.get_combined_minimum_size().y - 10
+	action_bar.size = Vector2(minf(700, viewport.x - 200), 122)
+	action_bar.position = Vector2((viewport.x - 184 - action_bar.size.x) * 0.5, viewport.y - 134)
+	action_bar.visible = not parts_editor.visible
+	dump_notice.position = Vector2(action_bar.position.x + action_bar.size.x + 12, action_bar.position.y + 8)
+	dump_notice.size = Vector2(viewport.x - dump_notice.position.x - 12, 100)
 	var top := toolbar.position.y + toolbar.size.y + 12
-	var bottom := footer.position.y - 12
+	var bottom := action_bar.position.y - 12
 	var width := viewport.x - 28
 	if guide_panel.visible:
 		var guide_width := minf(280, viewport.x * 0.34)
 		guide_panel.position = Vector2(viewport.x - guide_width - 14, top)
 		guide_panel.size = Vector2(guide_width, maxf(100, minf(280, bottom - top)))
 		width -= guide_width + 12
+	if parts_editor.visible:
+		var parts_width := minf(420, viewport.x * 0.6)
+		parts_editor.position = Vector2(viewport.x - parts_width - 12, 12)
+		parts_editor.size = Vector2(parts_width, viewport.y - 24)
+		width -= parts_width + 12
 	work_area = Rect2(14, top, maxf(40, width), maxf(40, bottom - top))
 
 # Keep projection fixed while a pointer gesture is active; fitting then must not move its target.
@@ -1115,7 +1239,7 @@ func _build_presets_ui(style: StyleBoxFlat) -> void:
 	column.add_theme_constant_override("separation", 6)
 	preset_panel.add_child(column)
 	var title := Label.new()
-	title.text = "종이 도면 프리셋"
+	title.text = "내 도면"
 	title.add_theme_font_size_override("font_size", 18)
 	column.add_child(title)
 	preset_name.placeholder_text = "이름 (예: 첫 종이비행기)"
@@ -1137,11 +1261,23 @@ func _build_presets_ui(style: StyleBoxFlat) -> void:
 	preset_load.text = "선택 도면 불러오기"
 	preset_load.pressed.connect(_request_preset_load)
 	var close := Button.new()
-	close.text = "닫기"
+	close.text = "계속 접기"
 	close.pressed.connect(_hide_presets)
-	for button in [preset_save, preset_load, close]:
+	for button in [preset_save, preset_load]:
 		button.focus_mode = Control.FOCUS_NONE
 		row.add_child(button)
+	var exits := HBoxContainer.new()
+	column.add_child(exits)
+	exits.add_child(close)
+	preset_fly.text = "접기 마치고 보관" if park_mode else "날려보기"
+	preset_fly.focus_mode = Control.FOCUS_NONE
+	preset_fly.pressed.connect(func() -> void:
+		if not preset_pending.is_empty() or not pending_stock.is_empty(): return
+		_hide_presets()
+		_open_flight()
+	)
+	exits.add_child(preset_fly)
+	PlayUI.primary(preset_fly)
 	var confirmation := HBoxContainer.new()
 	column.add_child(confirmation)
 	preset_confirm.pressed.connect(_confirm_preset)
@@ -1151,6 +1287,7 @@ func _build_presets_ui(style: StyleBoxFlat) -> void:
 		button.focus_mode = Control.FOCUS_NONE
 		confirmation.add_child(button)
 	preset_shade.hide()
+	pending_stock = {}
 	_set_preset_pending({})
 
 func _show_presets() -> void:
@@ -1161,16 +1298,19 @@ func _show_presets() -> void:
 	_refresh_preset_list()
 	_set_preset_pending({})
 	preset_shade.show()
+	Audio.play_sfx("open")
 
 func _hide_presets() -> void:
+	if preset_shade.visible: Audio.play_sfx("close")
 	preset_shade.hide()
+	pending_stock = {}
 	_set_preset_pending({})
 	get_viewport().gui_release_focus()
 
 func _refresh_preset_list(selected_name: String = "") -> void:
 	preset_entries = preset_store.list_presets()
 	if not preset_store.list_errors.is_empty():
-		preset_notice.text = "읽지 못한 프리셋 파일 %d개가 있습니다. 원본 파일은 유지됩니다." % preset_store.list_errors.size()
+		preset_notice.text = "읽지 못한 도면 파일 %d개가 있습니다. 원본 파일은 유지됩니다." % preset_store.list_errors.size()
 	preset_list.clear()
 	var selected := 0
 	for i in preset_entries.size():
@@ -1192,12 +1332,13 @@ func _set_preset_pending(value: Dictionary) -> void:
 	preset_save.disabled = not value.is_empty()
 	preset_load.disabled = not value.is_empty() or preset_entries.is_empty()
 	preset_name.editable = value.is_empty()
+	preset_fly.disabled = not value.is_empty() or not pending_stock.is_empty()
 	if value.is_empty(): return
 	preset_confirm.text = "덮어쓰기" if value.kind == "save" else "불러오기"
 	preset_notice.text = "‘%s’을 덮어쓸까요?" % value.name if value.kind == "save" else "현재 종이를 ‘%s’으로 바꿉니다. 계속할까요?" % value.name
 
 func _preset_state() -> Dictionary:
-	return {"faces": faces.duplicate(true), "history": history.duplicate(true), "fold_count": fold_count, "reference": custom_reference.duplicate(true)}
+	return {"faces": faces.duplicate(true), "history": history.duplicate(true), "fold_count": fold_count, "reference": custom_reference.duplicate(true), "flight_parts": flight_parts.duplicate(true), "paper_stock": paper_stock.duplicate(true)}
 
 func _request_preset_save() -> void:
 	if state != State.IDLE or reference_drawing or not preset_pending.is_empty(): return
@@ -1212,10 +1353,15 @@ func _save_preset(name: String, overwrite: bool) -> void:
 	_set_preset_pending({})
 	if not result.ok:
 		preset_notice.text = "저장 실패: " + result.error
+		Audio.play_sfx("error")
 		return
+	Audio.play_sfx("save")
 	_refresh_preset_list(result.name)
 	preset_notice.text = "저장됨: " + result.name
-	dump_notice.text = "프리셋 저장됨: " + result.name
+	var next_stock := pending_stock.duplicate(true)
+	_hide_presets()
+	if not next_stock.is_empty(): _reset_paper(next_stock)
+	dump_notice.text = "내 도면 저장됨: " + result.name
 
 func _request_preset_load() -> void:
 	if state != State.IDLE or not preset_pending.is_empty(): return
@@ -1235,10 +1381,13 @@ func _confirm_preset() -> void:
 		return
 	var sheet: Dictionary = pending.sheet
 	_cancel()
+	paper_stock = sheet.paper_stock.duplicate(true)
 	faces = sheet.faces.duplicate(true)
 	history.assign(sheet.history.duplicate(true))
 	fold_count = sheet.fold_count
 	custom_reference = sheet.reference.duplicate(true)
+	flight_parts = sheet.get("flight_parts", {}).duplicate(true)
+	parts_editor.hide()
 	grabbed_layer = -1
 	snap_marker = Vector2.INF
 	fold_angle = 0
@@ -1247,4 +1396,31 @@ func _confirm_preset() -> void:
 	if inspect_view: _toggle_view()
 	_refresh()
 	_hide_presets()
-	dump_notice.text = "프리셋 불러옴: " + pending.name
+	dump_notice.text = "내 도면 불러옴: " + pending.name
+func _open_parts() -> void:
+	if state != State.IDLE or flight_view != null: return
+	_cancel()
+	guide_panel.hide()
+	tools.hide()
+	parts_editor.open()
+
+func _open_paper_picker() -> void:
+	if state != State.IDLE or reference_drawing or flight_view != null or preset_shade.visible: return
+	parts_editor.hide()
+	tools.hide()
+	picker.open()
+
+func _save_then_start(stock: Dictionary) -> void:
+	pending_stock = stock.duplicate(true)
+	_show_presets()
+	preset_notice.text = "현재 도면을 저장하면 선택한 새 종이로 시작합니다. 취소하면 현재 접기를 유지합니다."
+
+func restore_sheet(sheet: Dictionary) -> void:
+	faces.assign(sheet.faces.duplicate(true))
+	history.assign(sheet.history.duplicate(true))
+	fold_count = sheet.fold_count
+	custom_reference = sheet.get("reference", {}).duplicate(true)
+	flight_parts = sheet.get("flight_parts", {}).duplicate(true)
+	paper_stock = Stock.read(sheet.get("paper_stock"), faces)
+	flight_session = sheet.get("flight_session", {}).duplicate(true)
+	_refresh()

@@ -10,11 +10,19 @@ config_version=5
 
 [application]
 
-config/name="Paper AirPlane"
-config/description="PAP — Paper AirPlane"
-run/main_scene="res://scenes/main.tscn"
+config/name="Paper Airplane Park"
+config/use_custom_user_dir=true
+config/custom_user_dir_name="Godot/app_userdata/Paper AirPlane"
+config/custom_user_dir_name.linux="godot/app_userdata/Paper AirPlane"
+config/custom_user_dir_name.web="godot/app_userdata/Paper AirPlane"
+config/description="PAP — Paper Airplane Park"
+run/main_scene="res://scenes/park.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
+
+[autoload]
+
+Audio="*res://scripts/audio.gd"
 
 [display]
 
@@ -38,6 +46,7 @@ theme/custom_font.web="res://assets/fonts/NanumGothic-Regular.ttf"
 
 3d_physics/layer_1="World"
 3d_physics/layer_2="Paper"
+3d_physics/layer_3="Player"
 
 [physics]
 

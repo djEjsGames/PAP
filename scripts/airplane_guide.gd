@@ -1,8 +1,9 @@
 extends RefCounted
+const Paper := preload("res://scripts/paper_geometry.gd")
 
-static func steps() -> Array[Dictionary]:
+static func steps(size: float = Paper.DEFAULT_SIZE) -> Array[Dictionary]:
 	var width := 0.2 * tan(PI / 8.0)
-	return [
+	var result: Array[Dictionary] = [
 		_fold("중심선 잡기", "종이를 세로로 반 접습니다. 민트색 중심선을 기준으로 오른쪽 가장자리를 왼쪽으로 넘기세요.", Vector2(0, -0.1), Vector2(0, 0.1), Vector2(0.1, 0)),
 		{"action": "unfold", "title": "다시 펼치기", "text": "U로 펼칩니다. 가운데 점과 중심 가이드를 이후 접기의 기준으로 사용하세요."},
 		_fold("왼쪽 위 모서리", "왼쪽 위 꼭짓점을 가운데 점으로 접습니다. 2번 모드에서는 왼쪽 변 중앙과 위쪽 변 중앙을 잇는 선을 사용하세요.", Vector2(-0.1, 0), Vector2(0, -0.1), Vector2(-0.1, -0.1)),
@@ -14,6 +15,12 @@ static func steps() -> Array[Dictionary]:
 		{"action": "flip", "title": "반대쪽으로 뒤집기", "text": "F로 종이를 뒤집어 반대쪽 날개를 위로 가져옵니다."},
 		_fold("반대쪽 날개", "위쪽 연결부 모드로 반대쪽 날개도 접습니다. 양쪽 날개를 따로 접은 평평한 기본형입니다. B로 날기 테스트에 들어가 양쪽 날개 각도를 벌리고 발사해 보세요.", Vector2(-width, -0.1), Vector2(-width * 0.5, 0.1), Vector2(0, 0.1), true)
 	]
+
+	# Keep the established guide template, scaling only instructions to the current sheet.
+	for step in result:
+		if step.action == "fold":
+			for key in ["a", "b", "grab", "target"]: step[key] *= size / 0.2
+	return result
 
 static func _fold(title: String, text: String, a: Vector2, b: Vector2, grab: Vector2, single: bool = false) -> Dictionary:
 	var normal := (b - a).normalized().orthogonal()

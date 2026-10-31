@@ -3,14 +3,33 @@ extends RefCounted
 const EPS := 0.0000001
 const JOIN_EPS := 0.000001
 const MIN_AREA := 0.00000000000001
-const HALF_SIZE := 0.1
+const DEFAULT_SIZE := 0.15
 const MIN_OVERLAP_AREA := 0.0000000001
+const FLOAT32_RELATIVE_EPS := 0.00000011920928955078125
 
-static func square() -> Array[Dictionary]:
+static func square(size: float = DEFAULT_SIZE) -> Array[Dictionary]:
+	return rectangle(Vector2.ONE * size)
+
+static func rectangle(size: Vector2) -> Array[Dictionary]:
+	var half := size * 0.5
 	var points := PackedVector2Array([
-		Vector2(-HALF_SIZE, -HALF_SIZE), Vector2(HALF_SIZE, -HALF_SIZE),
-		Vector2(HALF_SIZE, HALF_SIZE), Vector2(-HALF_SIZE, HALF_SIZE)])
+		Vector2(-half.x, -half.y), Vector2(half.x, -half.y),
+		Vector2(half.x, half.y), Vector2(-half.x, half.y)])
 	return [{"points": points, "paper": points.duplicate(), "seams": PackedInt32Array([0, 1, 2, 3]), "front": true}]
+
+static func material_size(faces: Array[Dictionary]) -> Vector2:
+	var low := Vector2(INF, INF)
+	var high := -low
+	for face in faces:
+		for point in face.paper:
+			low = low.min(point)
+			high = high.max(point)
+	if not low.is_finite() or not high.is_finite() or (low + high).length() > JOIN_EPS: return Vector2.ZERO
+	return high - low
+
+static func square_size(faces: Array[Dictionary]) -> float:
+	var size := material_size(faces)
+	return size.x if absf(size.x - size.y) <= JOIN_EPS else 0
 
 static func area(points: PackedVector2Array) -> float:
 	var result := 0.0
@@ -281,6 +300,9 @@ static func edge_near(faces: Array[Dictionary], point: Vector2, radius: float) -
 	return result
 
 static func snap(faces: Array[Dictionary], point: Vector2, radius: float, include_reference: bool = true, override_reference: Dictionary = {}) -> Vector2:
+	return snap_candidate(faces, point, radius, include_reference, override_reference).point
+
+static func snap_candidate(faces: Array[Dictionary], point: Vector2, radius: float, include_reference: bool = true, override_reference: Dictionary = {}) -> Dictionary:
 	var best := radius
 	var result := point
 	for face in faces:
@@ -292,7 +314,7 @@ static func snap(faces: Array[Dictionary], point: Vector2, radius: float, includ
 					best = distance
 					result = candidate
 	if not include_reference:
-		return result
+		return {"point": result, "snapped": best < radius}
 	var reference := reference_geometry(faces) if override_reference.is_empty() else override_reference
 	for candidate in reference.centers:
 		var distance: float = point.distance_to(candidate)
@@ -300,14 +322,14 @@ static func snap(faces: Array[Dictionary], point: Vector2, radius: float, includ
 			best = distance
 			result = candidate
 	if best < radius:
-		return result
+		return {"point": result, "snapped": best < radius}
 	for segment in reference.segments:
 		var candidate := Geometry2D.get_closest_point_to_segment(point, segment[0], segment[1])
 		var distance := point.distance_to(candidate)
 		if distance < minf(best, radius * 0.5):
 			best = distance
 			result = candidate
-	return result
+	return {"point": result, "snapped": best < radius}
 
 static func flip_center(faces: Array[Dictionary]) -> float:
 	var low := INF
@@ -338,12 +360,83 @@ static func _bounds(points: PackedVector2Array) -> Rect2:
 	return bounds
 
 static func overlap_area(left: PackedVector2Array, right: PackedVector2Array) -> float:
+	if left.size() < 3 or right.size() < 3: return 0.0
 	if not _bounds(left).intersects(_bounds(right)):
 		return 0.0
+	if _boundary_separated(left, right) or _boundary_separated(right, left): return 0.0
+	return _convex_overlap_area(left, right)
+
+static func _convex_overlap_area(left: PackedVector2Array, right: PackedVector2Array) -> float:
+	# Faces stay convex after straight cuts. Keep clipping intermediates out of float32 Vector2.
+	var polygon := PackedFloat64Array()
+	for point in left:
+		polygon.append(point.x)
+		polygon.append(point.y)
+	var winding := 0.0
+	for i in range(1, right.size() - 1):
+		winding += (float(right[i].x) - right[0].x) * (float(right[i + 1].y) - right[0].y) - (float(right[i].y) - right[0].y) * (float(right[i + 1].x) - right[0].x)
+	if winding == 0.0: return 0.0
+	var orientation := signf(winding)
+	var resolved_edges: Array[bool] = []
+	for edge in right.size():
+		resolved_edges.append(_has_edge_interior(right, right[edge], right[(edge + 1) % right.size()], orientation))
+	for edge in right.size():
+		if polygon.size() < 6: return 0.0
+		var a := right[edge]
+		var b := right[(edge + 1) % right.size()]
+		var dx := float(b.x) - a.x
+		var dy := float(b.y) - a.y
+		# A wholly sub-resolution sliver still needs its actual clipping constraints for material mapping.
+		if resolved_edges.has(true) and not resolved_edges[edge]: continue
+		var clipped := PackedFloat64Array()
+		var px := polygon[-2]
+		var py := polygon[-1]
+		var previous_distance := orientation * (dx * (py - a.y) - dy * (px - a.x))
+		for vertex in range(0, polygon.size(), 2):
+			var qx := polygon[vertex]
+			var qy := polygon[vertex + 1]
+			var distance := orientation * (dx * (qy - a.y) - dy * (qx - a.x))
+			if (previous_distance < 0.0) != (distance < 0.0):
+				var t := previous_distance / (previous_distance - distance)
+				clipped.append(px + t * (qx - px))
+				clipped.append(py + t * (qy - py))
+			if distance >= 0.0:
+				clipped.append(qx)
+				clipped.append(qy)
+			px = qx
+			py = qy
+			previous_distance = distance
+		polygon = clipped
+	if polygon.size() < 6: return 0.0
 	var result := 0.0
-	for polygon in Geometry2D.intersect_polygons(left, right):
-		result += area(polygon)
-	return result
+	for i in range(2, polygon.size() - 2, 2):
+		result += (polygon[i] - polygon[0]) * (polygon[i + 3] - polygon[1]) - (polygon[i + 1] - polygon[1]) * (polygon[i + 2] - polygon[0])
+	return minf(absf(result) * 0.5, minf(area(left), area(right)))
+
+static func _has_edge_interior(points: PackedVector2Array, a: Vector2, b: Vector2, orientation: float) -> bool:
+	var dx := float(b.x) - a.x
+	var dy := float(b.y) - a.y
+	for p in points:
+		var rx := float(p.x) - a.x
+		var ry := float(p.y) - a.y
+		var scale := maxf(maxf(absf(a.x), absf(a.y)), maxf(maxf(absf(b.x), absf(b.y)), maxf(absf(p.x), absf(p.y))))
+		var uncertainty := scale * FLOAT32_RELATIVE_EPS
+		var error := 2.0 * uncertainty * (absf(dx) + absf(dy) + absf(rx) + absf(ry)) + 8.0 * uncertainty * uncertainty
+		if orientation * (dx * ry - dy * rx) > error: return true
+	return false
+
+static func _boundary_separated(subject: PackedVector2Array, boundary: PackedVector2Array) -> bool:
+	var winding := 0.0
+	for i in range(1, boundary.size() - 1):
+		winding += (float(boundary[i].x) - boundary[0].x) * (float(boundary[i + 1].y) - boundary[0].y) - (float(boundary[i].y) - boundary[0].y) * (float(boundary[i + 1].x) - boundary[0].x)
+	var orientation := signf(winding)
+	if orientation == 0.0: return true
+	for edge in boundary.size():
+		var a := boundary[edge]
+		var b := boundary[(edge + 1) % boundary.size()]
+		# An axis must resolve its own polygon's interior before it can prove separation.
+		if _has_edge_interior(boundary, a, b, orientation) and not _has_edge_interior(subject, a, b, orientation): return true
+	return false
 
 # Audit an existing plan against the pre-fold stack, including old dump files.
 static func layer_obstructions(before: Array[Dictionary], plan_data: Dictionary) -> Array[Dictionary]:
@@ -354,24 +447,50 @@ static func layer_obstructions(before: Array[Dictionary], plan_data: Dictionary)
 		moving_sources.append(_material_source(before, part))
 	for part in plan_data.stay:
 		fixed_sources.append(_material_source(before, part))
+	for group in ["move", "stay"]:
+		var sources: Array[int] = moving_sources if group == "move" else fixed_sources
+		for index in sources.size():
+			if sources[index] < 0: blocked.append({"kind":"source_mapping", "part_group":group, "part_index":index})
 	for m in plan_data.move.size():
 		var moving: Dictionary = plan_data.move[m]
 		var source_m := moving_sources[m]
 		for s in plan_data.stay.size():
 			var fixed: Dictionary = plan_data.stay[s]
 			var source_s := fixed_sources[s]
-			if source_s <= source_m:
+			if source_m < 0 or source_s < 0 or source_s <= source_m:
 				continue
+			if _crease_separates(moving.points, fixed.points, plan_data.origin, plan_data.normal): continue
 			var overlap := overlap_area(moving.points, fixed.points)
 			if overlap > MIN_OVERLAP_AREA:
 				blocked.append({"moving_layer": source_m, "upper_fixed_layer": source_s, "area_m2": overlap})
 	return blocked
 
+static func _crease_separates(left: PackedVector2Array, right: PackedVector2Array, origin: Vector2, normal: Vector2) -> bool:
+	if not origin.is_finite() or not normal.is_finite() or normal.is_zero_approx(): return false
+	# The recorded hinge is an additional separating axis when both faces are roundoff-width slivers.
+	var positive: Array[bool] = []
+	var negative: Array[bool] = []
+	for points in [left, right]:
+		var all_positive := true
+		var all_negative := true
+		for p in points:
+			var distance := (float(p.x) - origin.x) * normal.x + (float(p.y) - origin.y) * normal.y
+			var scale := maxf(maxf(absf(p.x), absf(p.y)), maxf(absf(origin.x), absf(origin.y)))
+			var error := 2.0 * scale * FLOAT32_RELATIVE_EPS * (absf(normal.x) + absf(normal.y))
+			all_positive = all_positive and distance >= -error
+			all_negative = all_negative and distance <= error
+		positive.append(all_positive)
+		negative.append(all_negative)
+	return (positive[0] and negative[1]) or (negative[0] and positive[1])
+
 static func _material_source(before: Array[Dictionary], part: Dictionary) -> int:
 	var index := -1
 	var best := 0.0
 	for i in before.size():
-		var overlap := overlap_area(part.paper, before[i].paper)
+		# Material fragments need a source even when their width is only coordinate roundoff.
+		if part.paper == before[i].paper: return i
+		if not _bounds(part.paper).intersects(_bounds(before[i].paper)): continue
+		var overlap := _convex_overlap_area(part.paper, before[i].paper)
 		if overlap > best:
 			best = overlap
 			index = i

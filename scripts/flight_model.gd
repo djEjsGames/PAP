@@ -4,7 +4,11 @@ const Paper := preload("res://scripts/paper_geometry.gd")
 const PAPER_DENSITY := 0.08 # kg/m2: 80 gsm paper.
 const AIR_DENSITY := 1.2
 
-static func wing_folds(history: Array[Dictionary]) -> Array[int]:
+static func wing_folds(history: Array[Dictionary], binding: Dictionary = {}) -> Array[int]:
+	if not binding.is_empty():
+		var chosen: Array[int] = []
+		for index in binding.wings: chosen.append(int(index))
+		return chosen
 	var result: Array[int] = []
 	for i in history.size():
 		if history[i].kind == "fold" and history[i].get("single_layer", false):
@@ -13,11 +17,11 @@ static func wing_folds(history: Array[Dictionary]) -> Array[int]:
 		result = result.slice(result.size() - 2)
 	return result
 
-static func launch_frame(faces: Array[Dictionary], history: Array[Dictionary]) -> Basis:
-	if wing_folds(history).size() != 2:
+static func launch_frame(faces: Array[Dictionary], history: Array[Dictionary], binding: Dictionary = {}) -> Basis:
+	if wing_folds(history, binding).size() != 2:
 		return Basis.IDENTITY
 	# Use a fixed reference so adjusting wing angles never rotates the whole aircraft.
-	var reference := pose(faces, history, Vector2(90, 90))
+	var reference := pose(faces, history, Vector2(90, 90), binding)
 	var wings: Array[Dictionary] = []
 	var grip: Array[Dictionary] = []
 	for i in faces.size():
@@ -30,6 +34,8 @@ static func launch_frame(faces: Array[Dictionary], history: Array[Dictionary]) -
 			wings.append(reference[i])
 		else:
 			grip.append(reference[i])
+	if not binding.is_empty():
+		grip = [reference[int(binding.grip)]]
 	var upright := Basis(Vector3.BACK, PI * 0.5)
 	var largest := 0.0
 	var normal := Vector3.UP
@@ -40,7 +46,6 @@ static func launch_frame(faces: Array[Dictionary], history: Array[Dictionary]) -
 	if normal.dot(Vector3.UP) < 0:
 		normal = -normal
 	upright = Basis(Quaternion(normal, Vector3.UP)) * upright
-	# shortcut: without a distinct grip, keep this orientation; explicit wing binding is needed for arbitrary folds.
 	if not grip.is_empty() and not wings.is_empty():
 		var offset: Vector3 = properties(grip).center - properties(wings).center
 		if (upright * offset).y > 0.000001:
@@ -51,8 +56,8 @@ static func _around(origin: Vector3, axis: Vector3, angle: float) -> Transform3D
 	var basis := Basis(axis.normalized(), angle)
 	return Transform3D(basis, origin - basis * origin)
 
-static func pose(faces: Array[Dictionary], history: Array[Dictionary], openings: Vector2) -> Array[Dictionary]:
-	var wings := wing_folds(history)
+static func pose(faces: Array[Dictionary], history: Array[Dictionary], openings: Vector2, binding: Dictionary = {}) -> Array[Dictionary]:
+	var wings := wing_folds(history, binding)
 	var result: Array[Dictionary] = []
 	for face in faces:
 		var material_center := Vector2.ZERO
@@ -95,7 +100,7 @@ static func pose(faces: Array[Dictionary], history: Array[Dictionary], openings:
 		result.append({"points": points, "paper": face.paper, "seams": face.seams, "normal": posed.basis * Vector3.UP, "layer_sign": signf((flat.basis * Vector3.UP).y)})
 	return result
 
-static func properties(posed: Array[Dictionary]) -> Dictionary:
+static func properties(posed: Array[Dictionary], density: float = PAPER_DENSITY) -> Dictionary:
 	var area := 0.0
 	var center := Vector3.ZERO
 	var moment := Vector3.ZERO
@@ -112,7 +117,7 @@ static func properties(posed: Array[Dictionary]) -> Dictionary:
 	if area > 0.0:
 		center /= area
 	var shift := Vector3(center.y * center.y + center.z * center.z, center.x * center.x + center.z * center.z, center.x * center.x + center.y * center.y)
-	return {"area": area, "mass": area * PAPER_DENSITY, "center": center, "inertia": (moment - shift * area) * PAPER_DENSITY}
+	return {"area": area, "mass": area * density, "center": center, "inertia": (moment - shift * area) * density}
 
 # Subtract coplanar overlaps before assigning aerodynamic area; folded layers do not multiply lift.
 static func panels(posed: Array[Dictionary], center: Vector3) -> Array[Dictionary]:
@@ -203,6 +208,9 @@ static func aerodynamic_load(linear: Vector3, angular: Vector3, surface: Diction
 	var tangent := velocity - normal * velocity.dot(normal)
 	if tangent.length_squared() < 0.00000001:
 		tangent = angular.cross(normal)
+		# With no tangential flow, choose the same pressure-centre direction for either face winding.
+		if tangent[tangent.abs().max_axis_index()] < 0:
+			tangent = -tangent
 	if tangent.length_squared() < 0.00000001:
 		tangent = surface.points[1] - surface.points[0]
 	tangent = tangent.normalized()
@@ -214,14 +222,14 @@ static func aerodynamic_load(linear: Vector3, angular: Vector3, surface: Diction
 	var alpha := asin(clampf(-velocity.normalized().dot(normal), -1.0, 1.0))
 	var coefficients := aerodynamic_coefficients(alpha)
 	var position: Vector3 = surface.position + tangent * (chord * coefficients.z)
-	var force := aerodynamic_force(velocity, normal, surface.area)
+	var force := aerodynamic_force(linear + angular.cross(position), normal, surface.area)
 	var axis := tangent.cross(normal).normalized()
 	var rotation: float = angular.dot(axis)
 	var lift_direction := (normal - velocity.normalized() * velocity.normalized().dot(normal)).normalized()
-	# Equations 4.11/4.15: rotational lift acts centrally; rotational drag supplies the moment.
+	# Rotational lift acts at this panel centre, so its torque must use the same point.
 	var rotational_lift: Vector3 = lift_direction * (0.5 * AIR_DENSITY * surface.area * chord * 1.1 * rotation * speed)
 	var rotational_drag: Vector3 = -axis * (0.5 * AIR_DENSITY * 1.9 * moments.y * rotation * absf(rotation))
-	return {"force": force + rotational_lift, "torque": position.cross(force) + rotational_drag}
+	return {"force": force + rotational_lift, "torque": position.cross(force) + surface.position.cross(rotational_lift) + rotational_drag}
 
 static func _surface_moments(surface: Dictionary, tangent: Vector3) -> Vector2:
 	var span: Vector3 = surface.normal.cross(tangent).normalized()

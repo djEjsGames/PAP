@@ -52,6 +52,64 @@ jobs:
           ~/.local/bin/godot --headless --path . --script res://tests/test_paper.gd --log-file "$PWD/build/tests.log"
           if grep -E 'SCRIPT ERROR:|ERROR:' build/tests.log; then exit 1; fi
           grep -E 'PAP: [0-9]+ checks, 0 failures' build/tests.log
+      - name: Run park review and inspection regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_park_review.gd --log-file "$PWD/build/park_review.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/park_review.log; then exit 1; fi
+          grep -E 'PAP park review: [0-9]+ checks, 0 failures' build/park_review.log
+      - name: Run park loop regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_park.gd --log-file "$PWD/build/park.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/park.log; then exit 1; fi
+          grep -E 'PAP park: [0-9]+ checks, 0 failures' build/park.log
+      - name: Run play flow regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_play_flow.gd --log-file "$PWD/build/flow.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/flow.log; then exit 1; fi
+          grep -E 'PAP flow: [0-9]+ checks, 0 failures' build/flow.log
+      - name: Run startup inventory and target practice regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_initial_take.gd --log-file "$PWD/build/initial_take.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/initial_take.log; then exit 1; fi
+          grep -E 'PAP initial take: [0-9]+ checks, 0 failures' build/initial_take.log
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_practice.gd --log-file "$PWD/build/practice.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/practice.log; then exit 1; fi
+          grep -E 'PAP practice: [0-9]+ checks, 0 failures' build/practice.log
+      - name: Run paper stock and legacy compatibility tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_defaults.gd --log-file "$PWD/build/defaults.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/defaults.log; then exit 1; fi
+          grep -E 'PAP defaults: [0-9]+ checks, 0 failures' build/defaults.log
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_paper_stock.gd --log-file "$PWD/build/stock.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/stock.log; then exit 1; fi
+          grep -E 'PAP stock: [0-9]+ checks, 0 failures' build/stock.log
+      - name: Run crease angle and previous stock tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_line_angle.gd --log-file "$PWD/build/line_angle.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/line_angle.log; then exit 1; fi
+          grep -E 'PAP line/size: [0-9]+ checks, 0 failures' build/line_angle.log
+      - name: Run flight energy regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_flight_energy.gd --log-file "$PWD/build/energy.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/energy.log; then exit 1; fi
+          grep -E 'PAP energy: [0-9]+ checks, 0 failures' build/energy.log
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_flight_research.gd --log-file "$PWD/build/research.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/research.log; then exit 1; fi
+          grep -E 'PAP research: [0-9]+ checks, 0 failures' build/research.log
       - name: Export Web
         shell: bash
         run: |
@@ -63,6 +121,12 @@ jobs:
           test -s build/web/index.wasm
           test -s build/web/index.pck
           cp assets/fonts/OFL.txt build/web/OFL.txt
+          cp assets/characters/kenney/License.txt build/web/character-license.txt
+          cp assets/characters/kenney/SOURCE.md build/web/character-source.md
+          cp assets/audio/SOURCE.md build/web/audio-source.md
+          mkdir -p build/web/audio-licenses
+          cp assets/audio/music/License.txt build/web/audio-licenses/music.txt
+          for pack in rpg casino impact interface; do cp "assets/audio/kenney_$pack/License.txt" "build/web/audio-licenses/kenney_$pack.txt"; done
           touch build/web/.nojekyll
       - uses: actions/upload-pages-artifact@v4
         with:

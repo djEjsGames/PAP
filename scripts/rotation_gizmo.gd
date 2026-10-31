@@ -13,7 +13,7 @@ func _process(_delta: float) -> void:
 	queue_redraw()
 
 func available() -> bool:
-	return flight != null and flight.ready_to_launch and not flight.running and flight.elapsed == 0
+	return visible and flight != null and flight.gauge_stage == 0 and flight.ready_to_launch and not flight.running and flight.elapsed == 0
 
 func ring_points(axis: int) -> PackedVector2Array:
 	var points := PackedVector2Array()
@@ -58,7 +58,7 @@ func begin_drag(point: Vector2) -> bool:
 	if start_vector.length_squared() < 0.5:
 		selected_axis = -1
 		return false
-	start_attitude = flight.attitude
+	start_attitude = flight.body.global_basis
 	return true
 
 func update_drag(point: Vector2, snap: bool) -> void:

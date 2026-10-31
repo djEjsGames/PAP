@@ -1,4 +1,6 @@
 extends RefCounted
+const Stock := preload("res://scripts/paper_stock.gd")
+const Parts := preload("res://scripts/flight_parts.gd")
 const Dump := preload("res://scripts/paper_dump.gd")
 const Paper := preload("res://scripts/paper_geometry.gd")
 const MAX_BYTES := 16 * 1024 * 1024
@@ -135,7 +137,10 @@ static func _validate_state(state: Dictionary) -> String:
 		if not entry is Dictionary: return "접기 이력이 올바르지 않습니다."
 		typed_history.append(entry)
 	state.history = typed_history
-	var expected := Paper.square()
+	var stock := Stock.read(state.get("paper_stock"), typed_faces)
+	if stock.is_empty(): return "용지 종류·치수·평량과 재료 좌표가 일치하지 않습니다."
+	state.paper_stock = stock
+	var expected := Paper.rectangle(stock.size)
 	var count := 0
 	for entry in state.history:
 		if not entry is Dictionary or not _face_list_valid(entry.get("faces")) or entry.get("fold_count", -1) != count or not entry.get("single_layer", false) is bool: return "접기 이력이 올바르지 않습니다."
@@ -172,8 +177,10 @@ static func _validate_state(state: Dictionary) -> String:
 			for segment in reference.segments:
 				if not segment is PackedVector2Array or segment.size() != 2 or not segment[0].is_finite() or not segment[1].is_finite(): return "기준선 좌표가 올바르지 않습니다."
 		else: return "지원하지 않는 기준점입니다."
+	if not Parts.schema(state.get("flight_parts", {})): return "비행 부위 지정 데이터가 올바르지 않습니다."
+	state.flight_parts = state.get("flight_parts", {})
 	state.reference = reference
 	state.fold_count = count
-	var report := Dump.validate({"format": "pap-fold-dump", "version": 1, "faces": typed_faces, "history": state.history})
+	var report := Dump.validate({"format": "pap-fold-dump", "version": 1, "faces": typed_faces, "history": state.history, "paper_stock": stock})
 	if not report.valid: return "종이 검증 실패: " + "; ".join(PackedStringArray(report.errors))
 	return ""
