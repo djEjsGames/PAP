@@ -91,10 +91,11 @@ func run() -> void:
 	check(loaded.ok and encoded(loaded.sheet) == original_sheet, "New original sheet round-trips unchanged")
 	var park: Node = load("res://scenes/park.tscn").instantiate()
 	root.add_child(park)
+	buy_fixture(park)
 	await layout()
-	park.items[1].sheet = sheet.duplicate(true)
+	park.items[OWN_ID].sheet = sheet.duplicate(true)
 	park.player.position = park.BENCH
-	park.open_editor(1)
+	park.open_editor(OWN_ID)
 	await layout()
 	var editor: Node = park.editor
 	check(editor != null and encoded(editor._preset_state()) == original_sheet, "Workbench opens exact new sheet")
@@ -108,11 +109,11 @@ func run() -> void:
 	editor.restore_sheet(sheet)
 	park.finish_edit(true)
 	await layout()
-	check(park.editor == null and park.items[1].state == "stored" and encoded(park.items[1].sheet) == original_sheet, "Workbench stores exact new original sheet")
-	park.selected_id = 1
+	check(park.editor == null and park.items[OWN_ID].state == "stored" and encoded(park.items[OWN_ID].sheet) == original_sheet, "Workbench stores exact new original sheet")
+	park.selected_id = OWN_ID
 	park._take_selected()
 	await layout()
-	check(park.held_id == 1 and encoded(park.items[1].sheet) == original_sheet, "Retrieval keeps same physical sheet with original history and parts")
+	check(park.held_id == OWN_ID and encoded(park.items[OWN_ID].sheet) == original_sheet, "Retrieval keeps same physical sheet with original history and parts")
 	park.queue_free()
 	await layout()
 	print("PAP source mapping: %d checks, %d failures" % [checks, failures])

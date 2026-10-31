@@ -5,12 +5,13 @@ func run() -> void:
 		root.size = size
 		var park: Node = load("res://scenes/park.tscn").instantiate()
 		root.add_child(park)
+		buy_fixture(park)
 		await layout()
 		park.player.position = Vector3(4, 0.01, 1)
-		park.items[1].sheet = folded_sheet(0.15)
-		park.items[1].sheet.paper_stock = Stock.option(0)
-		park.items[1].sheet.flight_parts = {}
-		park.selected_id = 1
+		park.items[OWN_ID].sheet = folded_sheet(0.15)
+		park.items[OWN_ID].sheet.paper_stock = Stock.option(0)
+		park.items[OWN_ID].sheet.flight_parts = {}
+		park.selected_id = OWN_ID
 		park._take_selected()
 		park.prepare_throw()
 		await layout()

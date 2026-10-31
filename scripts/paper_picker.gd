@@ -1,6 +1,7 @@
 extends ColorRect
 const Stock := preload("res://scripts/paper_stock.gd")
 const PlayUI := preload("res://scripts/play_ui.gd")
+var shop_mode := false
 var source: Node
 var panel := PanelContainer.new()
 var selected := 0
@@ -23,7 +24,7 @@ func _ready() -> void:
 	var column := VBoxContainer.new()
 	panel.add_child(column)
 	var title := Label.new()
-	title.text = "새 종이 · 다른 조건으로 접어보기"
+	title.text = "종이 상점 · 한 장씩 구매 / Esc 닫기" if shop_mode else "새 종이 · 다른 조건으로 접어보기"
 	title.add_theme_font_size_override("font_size", 18)
 	column.add_child(title)
 	warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -91,6 +92,9 @@ func _ready() -> void:
 	start.focus_mode = Control.FOCUS_NONE
 	start.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	start.pressed.connect(func() -> void:
+		if shop_mode:
+			source.buy_paper(selected)
+			return
 		hide()
 		source._reset_paper(Stock.option(selected))
 	)
@@ -103,14 +107,19 @@ func _ready() -> void:
 		source._save_then_start(Stock.option(selected))
 	)
 	actions.add_child(save_start)
+	save_start.visible = not shop_mode
 	var cancel := Button.new()
-	cancel.text = "취소"
+	cancel.text = "닫기 · 작업대로" if shop_mode else "취소"
 	cancel.focus_mode = Control.FOCUS_NONE
 	cancel.pressed.connect(hide)
 	actions.add_child(cancel)
 	hide()
 
 func open() -> void:
+	if shop_mode:
+		choose(selected)
+		show()
+		return
 	selected = 0
 	for i in 4:
 		if Stock.OPTIONS[i].id == source.paper_stock.id: selected = i
@@ -130,7 +139,13 @@ func choose(index: int) -> void:
 		cards[i].add_theme_stylebox_override("normal", style)
 		cards[i].add_theme_stylebox_override("hover", style)
 		cards[i].add_theme_stylebox_override("pressed", style)
+		if shop_mode: titles[i].text += " · %d코인 · 보유 %d장" % [source.PRICES[i], source.owned_stock(i)]
 		cards[i].queue_redraw()
+
+	if shop_mode:
+		var price: int = source.PRICES[selected]
+		start.text = "1장 구매 · %d코인" % price
+		warning.text = "소지금 %d코인 · %s · 구매 후 %d코인%s" % [source.coins, Stock.OPTIONS[selected].name, maxi(0, source.coins - price), " · 잔액 부족" if source.coins < price else ""]
 
 func _process(_delta: float) -> void:
 	if not visible: return

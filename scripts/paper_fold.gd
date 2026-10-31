@@ -1,5 +1,7 @@
 extends Node3D
 
+var locked_stock: Dictionary = {}
+
 signal park_stored
 signal park_cancelled
 var park_mode := false
@@ -708,6 +710,9 @@ func _undo() -> void:
 	_refresh()
 
 func _reset_paper(stock: Dictionary = {}) -> void:
+	if park_mode:
+		if stock.is_empty(): stock = paper_stock
+		if not _accept_material(stock): return
 	if _animating():
 		return
 	dump_notice.text = ""
@@ -1380,6 +1385,10 @@ func _confirm_preset() -> void:
 		_save_preset(pending.name, true)
 		return
 	var sheet: Dictionary = pending.sheet
+	if not _accept_material(sheet.paper_stock):
+		preset_notice.text = dump_notice.text
+		_set_preset_pending({})
+		return
 	_cancel()
 	paper_stock = sheet.paper_stock.duplicate(true)
 	faces = sheet.faces.duplicate(true)
@@ -1405,6 +1414,9 @@ func _open_parts() -> void:
 	parts_editor.open()
 
 func _open_paper_picker() -> void:
+	if park_mode:
+		dump_notice.text = "새 재료는 공원 종이 상점에서 구매하세요. 현재 종이는 펼치기/되돌리기로 다시 접을 수 있습니다."
+		return
 	if state != State.IDLE or reference_drawing or flight_view != null or preset_shade.visible: return
 	parts_editor.hide()
 	tools.hide()
@@ -1416,6 +1428,9 @@ func _save_then_start(stock: Dictionary) -> void:
 	preset_notice.text = "현재 도면을 저장하면 선택한 새 종이로 시작합니다. 취소하면 현재 접기를 유지합니다."
 
 func restore_sheet(sheet: Dictionary) -> void:
+	var stock := Stock.read(sheet.get("paper_stock"), sheet.faces)
+	if not _accept_material(stock): return
+	if park_mode and locked_stock.is_empty(): locked_stock = stock.duplicate(true)
 	faces.assign(sheet.faces.duplicate(true))
 	history.assign(sheet.history.duplicate(true))
 	fold_count = sheet.fold_count
@@ -1424,3 +1439,9 @@ func restore_sheet(sheet: Dictionary) -> void:
 	paper_stock = Stock.read(sheet.get("paper_stock"), faces)
 	flight_session = sheet.get("flight_session", {}).duplicate(true)
 	_refresh()
+
+func _accept_material(stock: Dictionary) -> bool:
+	if not park_mode or locked_stock.is_empty() or Stock.same(stock, locked_stock): return true
+	dump_notice.text = "재료가 다른 도면입니다. 상점에서 맞는 종이를 구매·선택하세요."
+	Audio.play_sfx("error")
+	return false

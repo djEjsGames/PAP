@@ -63,3 +63,6 @@ static func texture(stock: Dictionary) -> Texture2D:
 	var result := ImageTexture.create_from_image(image)
 	textures[stock.id] = result
 	return result
+
+static func same(a: Dictionary, b: Dictionary) -> bool:
+	return a.get("id") == b.get("id") and a.get("size") == b.get("size") and a.get("gsm") == b.get("gsm")

@@ -26,22 +26,23 @@ func run() -> void:
 		root.size = size
 		var park: Node = load("res://scenes/park.tscn").instantiate()
 		root.add_child(park)
+		buy_fixture(park)
 		await layout()
-		var shape: String = JSON.stringify(Dump.encode(park.items[2].sheet))
+		var shape: String = JSON.stringify(Dump.encode(park.items[FOUND_ID].sheet))
 		park.toggle_practice()
 		check(not park.practice_active and park.items.size() == 2, "Far participation only guides the player and creates no item")
 		# Setup position only; the repeated pickup/start loop below uses actual character physics.
 		park.player.position = Vector3(2.5, 0.01, -1.6)
 		await layout()
-		park.recover_item(2)
+		park.recover_item(FOUND_ID)
 		await layout()
-		check(park.inspection != null and park.items[2].state == "inspecting", "Existing discovered plane still requires inspection and a processing choice")
+		check(park.inspection != null and park.items[FOUND_ID].state == "inspecting", "Existing discovered plane still requires inspection and a processing choice")
 		park.inspection.action_buttons[0].pressed.emit()
 		await layout()
 		await tap(KEY_TAB)
 		park.take_button.pressed.emit()
 		await layout()
-		check(park.held_id == 2 and park.items.size() == 2, "Practice uses the same existing discovered aircraft")
+		check(park.held_id == FOUND_ID and park.items.size() == 2, "Practice uses the same existing discovered aircraft")
 		await walk(park, park.PRACTICE_START)
 		await tap(KEY_T)
 		check(park.practice_active and not park.practice_target().is_empty(), "Participation at the physical start line enables one target")
@@ -101,17 +102,17 @@ func run() -> void:
 			await walk(park, landed_position)
 			await tap(KEY_E)
 			await layout()
-			check(park.held_id == 2 and park.items[2].state == "hand" and park.items[2].flight == null, "Real E recovery puts the same item directly in hand")
-			check(park.items.size() == 2 and JSON.stringify(Dump.encode(park.items[2].sheet)) == shape, "Repeated practice preserves material, history, ID and quantity")
+			check(park.held_id == FOUND_ID and park.items[FOUND_ID].state == "hand" and park.items[FOUND_ID].flight == null, "Real E recovery puts the same item directly in hand")
+			check(park.items.size() == 2 and JSON.stringify(Dump.encode(park.items[FOUND_ID].sheet)) == shape, "Repeated practice preserves material, history, ID and quantity")
 			await walk(park, park.PRACTICE_START)
-		check(park.items[2].flight_session.trials.size() == 3 and park.trials.size() == 3, "Exactly three item and global records survive the loop")
-		var original_sheet: Dictionary = park.items[2].sheet
-		park.items[2].sheet = park.items[1].sheet.duplicate(true)
+		check(park.items[FOUND_ID].flight_session.trials.size() == 3 and park.trials.size() == 3, "Exactly three item and global records survive the loop")
+		var original_sheet: Dictionary = park.items[FOUND_ID].sheet
+		park.items[FOUND_ID].sheet = park.items[OWN_ID].sheet.duplicate(true)
 		park.prepare_throw()
 		await layout()
 		check(park.active_flight.trials.size() == 3 and park.active_flight.previous_trail.mesh == null and park.active_flight.results.text.contains("기체/용지/부위 변경 전"), "Changed geometry keeps labeled history without presenting its path as the same aircraft configuration")
 		park.exit_flight()
-		park.items[2].sheet = original_sheet
+		park.items[FOUND_ID].sheet = original_sheet
 		await layout()
 		# A first miss cannot become success by rolling into the target later.
 		park.prepare_throw()
@@ -131,12 +132,12 @@ func run() -> void:
 		await tap(KEY_B)
 		# Own-item recovery safely stores a different already-held physical item.
 		probe.landed = true
-		park.items[2].state = "world"
+		park.items[FOUND_ID].state = "world"
 		await walk(park, probe.body.position)
-		park.selected_id = 1
+		park.selected_id = OWN_ID
 		park._take_selected()
-		park.recover_item(2)
-		check(park.held_id == 2 and park.items[1].state == "stored" and park.items.size() == 2, "Another held sheet is safely stored when recovering the same plane")
+		park.recover_item(FOUND_ID)
+		check(park.held_id == FOUND_ID and park.items[OWN_ID].state == "stored" and park.items.size() == 2, "Another held sheet is safely stored when recovering the same plane")
 		park.prepare_throw()
 		await layout()
 		var fresh: Node = park.active_flight

@@ -12,6 +12,9 @@ const Flight := preload("res://scripts/park_flight.gd")
 const Presets := preload("res://scripts/paper_presets.gd")
 const Dump := preload("res://scripts/paper_dump.gd")
 const PlayUI := preload("res://scripts/play_ui.gd")
+const SHOP := Vector3(-2.5, 0, -2.5)
+const PRICES := [10, 20, 15, 30]
+const Picker := preload("res://scripts/paper_picker.gd")
 const BENCH := Vector3(0, 0, -2.5)
 const PRACTICE_START := Vector3(4, 0, 1)
 const PRACTICE_CENTER := Vector3(4, 0.002, -3)
@@ -24,6 +27,9 @@ var zoom := 4.0
 var camera_dragging := false
 var move_keys: Dictionary = {}
 var items: Dictionary = {}
+var coins := 100
+var shop: Control
+var shop_target := false
 var next_id := 1
 var selected_id := -1
 var held_id := -1
@@ -69,9 +75,20 @@ func _ready() -> void:
 	get_window().content_scale_size = Vector2i.ZERO
 	_build_world()
 	_build_ui()
-	var history: Array[Dictionary] = []
-	var sheet := {"faces": Paper.square(), "history": history, "fold_count": 0, "reference": {}, "flight_parts": {}, "paper_stock": Stock.option(0)}
-	selected_id = add_item("내 색종이", sheet)
+	shop = Picker.new()
+	shop.source = self
+	shop.shop_mode = true
+	hud.add_child(shop)
+	_box(SHOP + Vector3(0, 0.45, 0), Vector3(1.3, 0.9, 0.7), Color("477a78"))
+	var sign := Label3D.new()
+	sign.font = preload("res://assets/fonts/NanumGothic-Regular.ttf")
+	sign.text = "종이 상점 [E]"
+	sign.font_size = 36
+	sign.pixel_size = 0.006
+	sign.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	sign.position = SHOP + Vector3.UP * 1.4
+	add_child(sign)
+	notice = "왼쪽 종이 상점에서 구매 → 작업대에서 접기"
 	# shortcut: one fixed discovery; random variants follow after the full loop is reviewed.
 	var found := _starter_plane()
 	var found_id := add_item("공원에서 발견한 비행기", found)
@@ -133,7 +150,7 @@ func _build_practice() -> void:
 		practice_labels.append(label)
 
 func toggle_practice() -> void:
-	if editor != null or inspection != null or active_flight != null or inventory.visible: return
+	if editor != null or inspection != null or active_flight != null or inventory.visible or (shop != null and shop.visible): return
 	if practice_active:
 		practice_active = false
 		notice = "자유 투척 · 연습 기록은 기체에 남아 있습니다."
@@ -338,15 +355,15 @@ func _process(_delta: float) -> void:
 	status_panel.size = Vector2(minf(360, size.x - 24), 0)
 	status_panel.position = Vector2(12, 12)
 	var held: String = items[held_id].name if held_id != -1 else "없음"
-	status.text = "손에 든 기체 · %s\n보관함 · %d개" % [held, stored_count()]
+	status.text = "소지금 · %d코인\n손에 든 기체 · %s · 보관 %d개" % [coins, held, stored_count()]
 	if not notice.is_empty(): status.text += "\n" + notice
 	actions_panel.size = Vector2(size.x - 24, 0)
 	actions_panel.position = Vector2(12, size.y - actions_panel.size.y - 12)
 	throw_button.disabled = held_id == -1
 	practice_button.text = "연습 나가기 [T]" if practice_active else "표적 연습 [T]"
 	_update_target()
-	interact_button.disabled = not bench_target and target_id == -1
-	interact_button.text = "작업대 접기 [E]" if bench_target else ("기체 회수 [E]" if target_id != -1 else "가까운 대상 [E]")
+	interact_button.disabled = not bench_target and not shop_target and target_id == -1
+	interact_button.text = "종이 상점 [E]" if shop_target else "작업대 접기 [E]" if bench_target else ("기체 회수 [E]" if target_id != -1 else "가까운 대상 [E]")
 	inventory.size = Vector2(minf(600, size.x - 24), minf(400, size.y - 24))
 	inventory.position = (size - inventory.size) * 0.5
 	edit_button.disabled = player.position.distance_to(BENCH) > 2.2 or selected_id == -1
@@ -357,7 +374,7 @@ func _process(_delta: float) -> void:
 			var screen := camera.unproject_position(point)
 			data.marker.text = "%s %s · %.1fm" % ["↶" if camera.is_position_behind(point) else "◇", data.name, player.position.distance_to(point)]
 			data.marker.position = Vector2(clampf(screen.x - 65, 12, maxf(12, size.x - data.marker.size.x - 12)), clampf(screen.y, status_panel.position.y + status_panel.size.y + 12, actions_panel.position.y - data.marker.size.y - 12))
-			data.marker.visible = not inventory.visible and id != target_id and data.state == "world"
+			data.marker.visible = not inventory.visible and not shop.visible and id != target_id and data.state == "world"
 
 func _update_character() -> void:
 	character.visible = active_flight == null
@@ -396,7 +413,7 @@ func _update_character() -> void:
 
 
 func _physics_process(delta: float) -> void:
-	if editor != null or inspection != null or inventory.visible or Audio.settings.visible or (active_flight != null and (active_flight.released or active_flight.gauge_stage != 0 or active_flight.adjust_panel.visible or active_flight.results_panel.visible)):
+	if editor != null or inspection != null or inventory.visible or (shop != null and shop.visible) or Audio.settings.visible or (active_flight != null and (active_flight.released or active_flight.gauge_stage != 0 or active_flight.adjust_panel.visible or active_flight.results_panel.visible)):
 		move_keys.clear()
 		footstep_time = 0
 		return
@@ -452,24 +469,34 @@ func _update_target() -> void:
 			best = distance
 			bench_target = false
 			target_id = id
+	shop_target = player.position.distance_to(SHOP) < best
+	if shop_target:
+		bench_target = false
+		target_id = -1
 	workbench.material_override.albedo_color = Color("e6bd67") if bench_target else Color("b98556")
-	hint.visible = not inventory.visible and (bench_target or target_id != -1)
+	hint.visible = not inventory.visible and not shop.visible and (shop_target or bench_target or target_id != -1)
 	var target := BENCH + Vector3.UP * 1.2 if bench_target else Vector3.ZERO
+	if shop_target: target = SHOP + Vector3.UP * 1.3
 	if target_id != -1: target = items[target_id].flight.body.position + Vector3.UP * 0.4
-	hint.text = "작업대 · 접기 [E]" if bench_target else "%s · %s [E] · %.1fm" % [items[target_id].name if target_id != -1 else "", "회수" if target_id != -1 and items[target_id].known else "살펴보기", best]
+	hint.text = "종이 상점 · 구매 [E]" if shop_target else "작업대 · 접기 [E]" if bench_target else "%s · %s [E] · %.1fm" % [items[target_id].name if target_id != -1 else "", "회수" if target_id != -1 and items[target_id].known else "살펴보기", best]
 	var size := get_viewport().get_visible_rect().size
 	var screen := camera.unproject_position(target)
 	hint.position = Vector2(clampf(screen.x - hint.size.x * 0.5, 12, maxf(12, size.x - hint.size.x - 12)), clampf(screen.y, status_panel.position.y + status_panel.size.y + 12, actions_panel.position.y - hint.size.y - 12))
 
 func interact() -> void:
-	if editor != null or inspection != null or active_flight != null or inventory.visible: return
+	if editor != null or inspection != null or active_flight != null or inventory.visible or (shop != null and shop.visible): return
 	_update_target()
-	if target_id != -1: recover_item(target_id)
+	if shop_target:
+		move_keys.clear()
+		camera_dragging = false
+		shop.open()
+		Audio.play_sfx("open")
+	elif target_id != -1: recover_item(target_id)
 	elif bench_target:
-		var id := held_id if held_id != -1 else selected_id
+		var id := selected_id if selected_id != -1 else held_id
 		if id != -1 and items[id].state in ["stored", "hand"]: open_editor(id)
 		else:
-			notice = "보관함에서 수정할 기체를 선택하세요."
+			notice = "종이 상점에서 구매한 뒤 작업대에서 E로 접으세요."
 			_toggle_inventory()
 
 func open_editor(id: int) -> void:
@@ -507,6 +534,7 @@ func finish_edit(store: bool) -> void:
 	if store:
 		var sheet: Dictionary = editor._preset_state()
 		var error: String = Presets._validate_state(sheet)
+		if not Stock.same(sheet.get("paper_stock", {}), data.sheet.paper_stock): error = "재료가 다릅니다. 상점에서 맞는 종이를 구매해 주세요."
 		if not error.is_empty():
 			editor.dump_notice.text = "보관 불가: " + error
 			Audio.play_sfx("error")
@@ -536,7 +564,7 @@ func stored_count() -> int:
 	return count
 
 func _toggle_inventory() -> void:
-	if editor != null or inspection != null or active_flight != null: return
+	if editor != null or inspection != null or active_flight != null or shop.visible: return
 	inventory.visible = not inventory.visible
 	Audio.play_sfx("open" if inventory.visible else "close")
 	move_keys.clear()
@@ -559,7 +587,7 @@ func _select_inventory(index: int) -> void:
 	selected_id = inventory_ids[index] if index >= 0 and index < inventory_ids.size() else -1
 	take_button.disabled = selected_id == -1
 	inspect_button.disabled = selected_id == -1
-	inventory_info.text = Stock.summary(items[selected_id].sheet.paper_stock) + "\n접기 %d회" % items[selected_id].sheet.fold_count if selected_id != -1 else "보관 중인 기체가 없습니다."
+	inventory_info.text = Stock.summary(items[selected_id].sheet.paper_stock) + "\n접기 %d회" % items[selected_id].sheet.fold_count if selected_id != -1 else "종이가 없습니다. 작업대 왼쪽 종이 상점에서 구매하세요."
 	preview.queue_redraw()
 
 func _draw_preview() -> void:
@@ -589,7 +617,7 @@ func _take_selected() -> void:
 	notice = "Space로 투척 준비 · 우클릭으로 조준"
 
 func prepare_throw() -> void:
-	if held_id == -1 or editor != null or inspection != null or active_flight != null or inventory.visible: return
+	if held_id == -1 or editor != null or inspection != null or active_flight != null or inventory.visible or (shop != null and shop.visible): return
 	move_keys.clear()
 	var flight := Flight.new()
 	flight.configure_item(self, held_id, items[held_id])
@@ -697,18 +725,24 @@ func recover_item(id: int) -> void:
 	_refresh_inventory()
 
 func _input(event: InputEvent) -> void:
+	if shop != null and shop.visible:
+		if event is InputEventKey:
+			if event.pressed and not event.echo and event.physical_keycode == KEY_ESCAPE: shop.hide()
+			get_viewport().set_input_as_handled()
+		return
 	if event is InputEventKey and not event.pressed: move_keys.erase(event.physical_keycode)
 	if event is InputEventKey and event.physical_keycode == KEY_TAB and editor == null and inspection == null and active_flight == null:
 		if event.pressed and not event.echo: _toggle_inventory()
 		get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and not event.pressed: camera_dragging = false
-	if editor != null or inspection != null or active_flight != null or inventory.visible: return
+	if editor != null or inspection != null or active_flight != null or inventory.visible or (shop != null and shop.visible): return
 	if event is InputEventMouseMotion and camera_dragging:
 		rotate_view(event.relative)
 		get_viewport().set_input_as_handled()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if shop != null and shop.visible: return
 	if editor != null or inspection != null or active_flight != null: return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.physical_keycode == KEY_D and event.ctrl_pressed and event.shift_pressed:
@@ -736,7 +770,7 @@ func snapshot() -> Dictionary:
 	var records: Array[Dictionary] = []
 	for data in items.values():
 		records.append({"id": data.id, "name": data.name, "state": data.state, "sheet": data.sheet.duplicate(true), "flight_session": data.flight_session.duplicate(true), "world_position": data.flight.body.position if data.flight != null else null, "world_velocity": data.flight.body.linear_velocity if data.flight != null else null})
-	return {"format": "pap-park-dump", "version": 1, "player_position": player.position, "view_angles": view_angles, "zoom": zoom, "held_id": held_id, "selected_id": selected_id, "items": records, "trials": trials.duplicate(true), "active_flight": active_flight.snapshot() if active_flight != null else null, "cleaning_records": cleaning_records.duplicate(true), "inventory": {"visible": inventory.visible, "take": {"position": take_button.global_position, "size": take_button.size}, "inspect": {"position": inspect_button.global_position, "size": inspect_button.size}}, "inspection": null if inspection == null else inspection.snapshot(), "character": {"motion": character.motion, "holding": character.holding, "hand_position": character.hand_position(), "hand_target": character.hand_target, "reach_error": character.reach_error}}
+	return {"format": "pap-park-dump", "version": 1, "player_position": player.position, "view_angles": view_angles, "zoom": zoom, "coins": coins, "shop_visible": shop.visible, "held_id": held_id, "selected_id": selected_id, "items": records, "trials": trials.duplicate(true), "active_flight": active_flight.snapshot() if active_flight != null else null, "cleaning_records": cleaning_records.duplicate(true), "inventory": {"visible": inventory.visible, "take": {"position": take_button.global_position, "size": take_button.size}, "inspect": {"position": inspect_button.global_position, "size": inspect_button.size}}, "inspection": null if inspection == null else inspection.snapshot(), "character": {"motion": character.motion, "holding": character.holding, "hand_position": character.hand_position(), "hand_target": character.hand_target, "reach_error": character.reach_error}}
 
 func dump_state() -> void:
 	var text := JSON.stringify(Dump.encode(snapshot()), "\t")
@@ -829,3 +863,30 @@ func finish_inspection(action: String) -> void:
 	hud.show()
 	camera.make_current()
 	_refresh_inventory()
+
+func buy_paper(index: int) -> int:
+	if index < 0 or index >= PRICES.size(): return -1
+	if coins < PRICES[index]:
+		shop.choose(index)
+		shop.warning.text += " · %d코인 부족" % (PRICES[index] - coins)
+		Audio.play_sfx("error")
+		return -1
+	var stock := Stock.option(index)
+	var history: Array[Dictionary] = []
+	var sheet := {"faces":Paper.rectangle(stock.size), "history":history, "fold_count":0, "reference":{}, "flight_parts":{}, "paper_stock":stock}
+	if not Presets._validate_state(sheet).is_empty(): return -1
+	var id := add_item(stock.name, sheet)
+	coins -= PRICES[index]
+	selected_id = id
+	notice = "%s 1장 구매 · 작업대에 다가가 E로 접으세요." % stock.name
+	shop.choose(index)
+	shop.warning.text += "\n" + notice
+	_refresh_inventory()
+	Audio.play_sfx("save")
+	return id
+
+func owned_stock(index: int) -> int:
+	var count := 0
+	for data in items.values():
+		if data.known and data.state != "cleared" and Stock.same(data.sheet.paper_stock, Stock.option(index)): count += 1
+	return count

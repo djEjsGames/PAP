@@ -83,6 +83,13 @@ jobs:
           ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_practice.gd --log-file "$PWD/build/practice.log"
           if grep -E 'SCRIPT ERROR:|ERROR:' build/practice.log; then exit 1; fi
           grep -E 'PAP practice: [0-9]+ checks, 0 failures' build/practice.log
+      - name: Run paper shop regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          ~/.local/bin/godot --headless --fixed-fps 240 --path . --script res://tests/test_shop.gd --log-file "$PWD/build/shop.log"
+          if grep -E 'SCRIPT ERROR:|ERROR:' build/shop.log; then exit 1; fi
+          grep -E 'PAP shop: [0-9]+ checks, 0 failures' build/shop.log
       - name: Run paper stock and legacy compatibility tests
         shell: bash
         run: |

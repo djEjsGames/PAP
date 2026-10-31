@@ -57,6 +57,7 @@ func run() -> void:
 		root.size = size
 		var park: Node = load("res://scenes/park.tscn").instantiate()
 		root.add_child(park)
+		buy_fixture(park)
 		await layout()
 		check(park.status.get_theme_font_size("font_size") >= 16 and park.hint.get_theme_font_size("font_size") >= 18, "HUD keeps readable font sizes in both windows")
 		check(park.status_panel.visible and park.actions_panel.visible, "HUD separates state and stable bottom actions")
@@ -91,10 +92,10 @@ func run() -> void:
 		check(park.bench_target and park.hint.visible, "Bench has one readable contextual action")
 		park.player.position = Vector3(3,0.01,1)
 		for index in 4:
-			park.items[1].sheet = sheet_for(index)
-			park.items[1].flight_session = {}
+			park.items[OWN_ID].sheet = sheet_for(index)
+			park.items[OWN_ID].flight_session = {}
 			park.carried_id = -1
-			park.selected_id = 1
+			park.selected_id = OWN_ID
 			park._take_selected()
 			await layout()
 			check(park.character.reach_error < 0.03 and park.carried.visible, "Carried aircraft follows the real pinch point")
@@ -119,23 +120,23 @@ func run() -> void:
 			park.exit_flight()
 			await layout()
 			check(park.character.visible, "Preparation cancellation restores character")
-			var immutable_before := material_state(park.items[1])
-			park.open_inspection(1,false)
+			var immutable_before := material_state(park.items[OWN_ID])
+			park.open_inspection(OWN_ID,false)
 			await layout()
 			check(park.inspection.model.mesh != null and park.inspection.can_deploy == (index == 0), "Every stock has real 3D preview without invented wings")
-			check(material_state(park.items[1]) == immutable_before, "Every stock's observation preserves its original dimensions and pose settings")
+			check(material_state(park.items[OWN_ID]) == immutable_before, "Every stock's observation preserves its original dimensions and pose settings")
 			if index >= 2: await capture("review_inspect_" + Stock.option(index).id + "_" + str(size.x))
 			park.finish_inspection("cancel")
 			await layout()
 		# Real found-object entry, local rotation, zoom, folded view, no mutation.
-		park.player.position = park.items[2].flight.body.position + Vector3(0.4,0,0.4)
+		park.player.position = park.items[FOUND_ID].flight.body.position + Vector3(0.4,0,0.4)
 		park.view_angles = Vector2.ZERO
 		await layout()
-		var found_before := material_state(park.items[2])
-		var original_transform: Transform3D = park.items[2].flight.body.transform
-		park.recover_item(2)
+		var found_before := material_state(park.items[FOUND_ID])
+		var original_transform: Transform3D = park.items[FOUND_ID].flight.body.transform
+		park.recover_item(FOUND_ID)
 		await layout()
-		check(park.inspection != null and park.items[2].state == "inspecting" and park.stored_count() == 0, "Unknown discovery reserves its same ID for automatic inspection")
+		check(park.inspection != null and park.items[FOUND_ID].state == "inspecting" and park.stored_count() == 0, "Unknown discovery reserves its same ID for automatic inspection")
 		var inspection: Node = park.inspection
 		check(inspection.model.mesh != null and inspection.can_deploy and inspection.deployed, "Discovery defaults to a connected real 90-degree 3D preview")
 		await capture("review_discovery_" + str(size.x))
@@ -161,58 +162,58 @@ func run() -> void:
 		await capture("review_rotated_" + str(size.x))
 		inspection.toggle.pressed.emit()
 		await layout()
-		check(not inspection.deployed and material_state(park.items[2]) == found_before, "Folded display never edits physical sheet/settings")
+		check(not inspection.deployed and material_state(park.items[FOUND_ID]) == found_before, "Folded display never edits physical sheet/settings")
 		await capture("review_folded_" + str(size.x))
 		inspection.reset_view()
 		check(inspection.rotation_angles == Vector2.ZERO and inspection.zoom == 1, "Reset restores the observation viewpoint")
 		await tap(KEY_ESCAPE)
-		check(park.inspection == null and park.items[2].state == "world" and park.items[2].flight.body.position.distance_to(original_transform.origin) < 0.01, "World Escape restores original state/location")
+		check(park.inspection == null and park.items[FOUND_ID].state == "world" and park.items[FOUND_ID].flight.body.position.distance_to(original_transform.origin) < 0.01, "World Escape restores original state/location")
 		await layout()
-		park.recover_item(2)
+		park.recover_item(FOUND_ID)
 		await layout()
 		park.inspection.action_buttons[0].pressed.emit()
 		park.finish_inspection("store")
 		await layout()
-		check(park.items.size() == 2 and park.items[2].state == "stored" and park.items[2].known and park.items[2].flight == null and material_state(park.items[2]) == found_before, "Store commits the same physical discovery once")
+		check(park.items.size() == 2 and park.items[FOUND_ID].state == "stored" and park.items[FOUND_ID].known and park.items[FOUND_ID].flight == null and material_state(park.items[FOUND_ID]) == found_before, "Store commits the same physical discovery once")
 		# Inventory observation returns to the same owned state and open inventory.
 		park._toggle_inventory()
 		await layout()
-		var owned_before := material_state(park.items[2])
-		park.open_inspection(2,false)
+		var owned_before := material_state(park.items[FOUND_ID])
+		park.open_inspection(FOUND_ID,false)
 		await layout()
 		await tap(KEY_ESCAPE)
 		await layout()
-		check(park.inventory.visible and park.items[2].state == "stored" and material_state(park.items[2]) == owned_before, "Inventory Escape restores its original ownership and immutable settings")
+		check(park.inventory.visible and park.items[FOUND_ID].state == "stored" and material_state(park.items[FOUND_ID]) == owned_before, "Inventory Escape restores its original ownership and immutable settings")
 		park.inventory.hide()
-		park.selected_id = 2
+		park.selected_id = FOUND_ID
 		park._take_selected()
-		var hand_before := material_state(park.items[2])
-		park.open_inspection(2,false)
+		var hand_before := material_state(park.items[FOUND_ID])
+		park.open_inspection(FOUND_ID,false)
 		await layout()
 		await tap(KEY_ESCAPE)
 		await layout()
-		check(park.held_id == 2 and park.items[2].state == "hand" and material_state(park.items[2]) == hand_before, "Owned hand inspection returns the same hand item and original settings")
+		check(park.held_id == FOUND_ID and park.items[FOUND_ID].state == "hand" and material_state(park.items[FOUND_ID]) == hand_before, "Owned hand inspection returns the same hand item and original settings")
 		# Valid explicit binding is used ahead of automatic recommendation.
-		var wings := Model.wing_folds(park.items[2].sheet.history)
-		var binding := {"signature":Parts.signature(park.items[2].sheet.faces,park.items[2].sheet.history), "wings":Array(wings), "grip":4}
-		check(Parts.valid(binding,park.items[2].sheet.faces,park.items[2].sheet.history), "Test discovery has a valid explicit wing binding")
-		park.items[2].sheet.flight_parts = binding
-		park.open_inspection(2,false)
+		var wings := Model.wing_folds(park.items[FOUND_ID].sheet.history)
+		var binding := {"signature":Parts.signature(park.items[FOUND_ID].sheet.faces,park.items[FOUND_ID].sheet.history), "wings":Array(wings), "grip":4}
+		check(Parts.valid(binding,park.items[FOUND_ID].sheet.faces,park.items[FOUND_ID].sheet.history), "Test discovery has a valid explicit wing binding")
+		park.items[FOUND_ID].sheet.flight_parts = binding
+		park.open_inspection(FOUND_ID,false)
 		await layout()
 		check(park.inspection.binding == binding and park.inspection.deployed, "Inspection prioritizes a valid binding")
 		park.finish_inspection("cancel")
 		await layout()
 		# Flat paper has no invented wing axes.
-		park.items[1].sheet = {"faces":Paper.square(), "history":[], "fold_count":0, "reference":{}, "flight_parts":{}, "paper_stock":Stock.option(0)}
-		park.open_inspection(1,false)
+		park.items[OWN_ID].sheet = {"faces":Paper.square(), "history":[], "fold_count":0, "reference":{}, "flight_parts":{}, "paper_stock":Stock.option(0)}
+		park.open_inspection(OWN_ID,false)
 		await layout()
 		check(not park.inspection.can_deploy and park.inspection.toggle.disabled, "No wing geometry is invented for an uncreased sheet")
 		park.finish_inspection("cancel")
 		await layout()
 		# Another aircraft keeps simulating while a discovery is inspected.
-		park.items[1].sheet = sheet_for(0)
+		park.items[OWN_ID].sheet = sheet_for(0)
 		park.carried_id = -1
-		park.selected_id = 1
+		park.selected_id = OWN_ID
 		park._take_selected()
 		park.player.position = Vector3(4,0.01,1)
 		park.prepare_throw()

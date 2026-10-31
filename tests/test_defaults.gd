@@ -113,3 +113,10 @@ func run() -> void:
 	DirAccess.remove_absolute(folder)
 	print("PAP defaults: %d checks, %d failures" % [checks, failures])
 	quit(1 if failures else 0)
+
+const OWN_ID := 2
+const FOUND_ID := 1
+
+func buy_fixture(park: Node) -> void:
+	check(park.coins == 100 and park.stored_count() == 0 and park.items.size() == 1, "New park has 100 coins, no free sheet, one discovery")
+	check(park.buy_paper(0) == OWN_ID and park.coins == 90, "Legacy regression fixture buys one real sheet")

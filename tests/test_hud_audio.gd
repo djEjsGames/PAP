@@ -47,9 +47,10 @@ func run() -> void:
 		root.size = size
 		var park: Node = load("res://scenes/park.tscn").instantiate()
 		root.add_child(park)
+		buy_fixture(park)
 		await layout()
 		check(audio.music.get_instance_id() == music_id, "New parks and discovered bodies never duplicate music")
-		park.selected_id = 1
+		park.selected_id = OWN_ID
 		park._take_selected()
 		var takes := count("take")
 		park.player.position = Vector3(4, 0.01, 1)
@@ -121,10 +122,10 @@ func run() -> void:
 		check(count("land") == landings + 1 and count("take") == takes, "View exit is not landing or automatic pickup")
 		park.player.position = flight.body.position
 		var recoveries := count("recover")
-		park.recover_item(1)
-		park.recover_item(1)
+		park.recover_item(OWN_ID)
+		park.recover_item(OWN_ID)
 		await layout()
-		check(count("recover") == recoveries + 1 and park.items[1].state == "hand" and park.held_id == 1, "Successful recovery sounds once and returns the same item to hand")
+		check(count("recover") == recoveries + 1 and park.items[OWN_ID].state == "hand" and park.held_id == OWN_ID, "Successful recovery sounds once and returns the same item to hand")
 		check(audio.music.get_instance_id() == music_id, "Scene round trips retain one music player")
 		park.queue_free()
 		await layout()
@@ -173,6 +174,7 @@ func run() -> void:
 	await layout()
 	var blocked_park: Node = load("res://scenes/park.tscn").instantiate()
 	root.add_child(blocked_park)
+	buy_fixture(blocked_park)
 	await layout()
 	blocked_park._take_selected()
 	blocked_park.player.position = Vector3(4, 0.01, 1)

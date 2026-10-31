@@ -79,10 +79,11 @@ func run() -> void:
 	# Exercise real workbench commit/retrieve and failure retention with the original sheet.
 	var park: Node = load("res://scenes/park.tscn").instantiate()
 	root.add_child(park)
+	buy_fixture(park)
 	await layout()
-	park.items[1].sheet = sheet.duplicate(true)
+	park.items[OWN_ID].sheet = sheet.duplicate(true)
 	park.player.position = park.BENCH
-	park.open_editor(1)
+	park.open_editor(OWN_ID)
 	await layout()
 	check(park.editor != null and encoded(park.editor._preset_state()) == sheet_before, "Workbench opens exact original sheet")
 	var editor: Node = park.editor
@@ -97,11 +98,11 @@ func run() -> void:
 	editor.restore_sheet(sheet)
 	park.finish_edit(true)
 	await layout()
-	check(park.editor == null and park.items[1].state == "stored" and encoded(park.items[1].sheet) == sheet_before, "Workbench stores exact original sheet")
-	park.selected_id = 1
+	check(park.editor == null and park.items[OWN_ID].state == "stored" and encoded(park.items[OWN_ID].sheet) == sheet_before, "Workbench stores exact original sheet")
+	park.selected_id = OWN_ID
 	park._take_selected()
 	await layout()
-	check(park.held_id == 1 and encoded(park.items[1].sheet) == sheet_before, "Retrieval preserves same physical sheet and original undo data")
+	check(park.held_id == OWN_ID and encoded(park.items[OWN_ID].sheet) == sheet_before, "Retrieval preserves same physical sheet and original undo data")
 	park.queue_free()
 	await layout()
 	print("PAP overlap validation: %d checks, %d failures" % [checks, failures])
