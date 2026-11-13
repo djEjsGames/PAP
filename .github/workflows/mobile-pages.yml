@@ -1,0 +1,44 @@
+name: Publish mobile test with preserved PC page
+on:
+  push:
+    branches: [codex/mobile-pages]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Stage published files
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/pap-pages/mobile"
+          cp index.* "$RUNNER_TEMP/pap-pages/"
+          cp OFL.txt character-license.txt character-source.md audio-source.md "$RUNNER_TEMP/pap-pages/"
+          cp -R audio-licenses "$RUNNER_TEMP/pap-pages/"
+          cp -R mobile/. "$RUNNER_TEMP/pap-pages/mobile/"
+          touch "$RUNNER_TEMP/pap-pages/.nojekyll"
+          test -s "$RUNNER_TEMP/pap-pages/mobile/index.html"
+          test -s "$RUNNER_TEMP/pap-pages/mobile/index.wasm"
+          test -s "$RUNNER_TEMP/pap-pages/mobile/index.pck"
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/pap-pages
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy PC and mobile test pages
+        id: deployment
+        uses: actions/deploy-pages@v4
